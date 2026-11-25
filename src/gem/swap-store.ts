@@ -25,7 +25,14 @@ export interface SwapRow {
   readonly tokenAmount: number;
   readonly block: number;
   readonly blockTime: number;
+  /** Signer's nonce for this tx (0–1 = brand-new wallet); null when unknown. */
+  readonly nonce?: number | null;
+  /** Priority fee (EIP-1559) or gas price, in gwei; a wallet-software fingerprint for clustering. */
+  readonly feeGwei?: number | null;
 }
+
+/** Columns added after the first release of gem_swaps (Stage 7). */
+const SWAP_COLUMNS_V2 = [['nonce', 'INTEGER'], ['fee_gwei', 'REAL']] as const;
 
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS gem_watch (
@@ -50,6 +57,11 @@ export interface ScanCursor {
   readonly coverageSince: number;
 }
 
+export interface StoredCursor extends ScanCursor {
+  /** When the collector last finished a scan: recorded swaps are current up to about here. */
+  readonly updatedAt: number;
+}
+
 export interface SwapStore {
   /** Adds a token to the watchlist or extends its expiry; returns true when it was new. */
   watch(entry: WatchEntry): boolean;
@@ -58,21 +70,29 @@ export interface SwapStore {
   insertSwaps(rows: readonly SwapRow[]): number;
   /** All recorded swaps of a token since `sinceMs`, oldest first. */
   swaps(chain: string, token: string, sinceMs: number): readonly SwapRow[];
-  cursor(chain: string): ScanCursor | null;
+  cursor(chain: string): StoredCursor | null;
   saveCursor(chain: string, cursor: ScanCursor, now: number): void;
+}
+
+function migrate(db: DatabaseSync): void {
+  const existing = new Set(db.prepare('PRAGMA table_info(gem_swaps)').all().map((c) => String(c.name)));
+  for (const [name, type] of SWAP_COLUMNS_V2) {
+    if (!existing.has(name)) db.exec(`ALTER TABLE gem_swaps ADD COLUMN ${name} ${type}`);
+  }
 }
 
 export function createSwapStore(db: DatabaseSync): SwapStore {
   db.exec(SCHEMA);
+  migrate(db);
   const upsertWatch = db.prepare(`
     INSERT INTO gem_watch (chain, token, pool, pool_kind, symbol, reason, added_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT (chain, token) DO UPDATE SET expires_at = MAX(expires_at, excluded.expires_at)`);
   const getWatch = db.prepare('SELECT * FROM gem_watch WHERE chain = ? AND token = ?');
   const active = db.prepare('SELECT * FROM gem_watch WHERE chain = ? AND expires_at > ? ORDER BY added_at DESC');
-  const insertSwap = db.prepare(`INSERT OR IGNORE INTO gem_swaps (chain, token, tx_hash, side, wallet, token_amount, block, block_time)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)`);
+  const insertSwap = db.prepare(`INSERT OR IGNORE INTO gem_swaps (chain, token, tx_hash, side, wallet, token_amount, block, block_time, nonce, fee_gwei)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const selectSwaps = db.prepare('SELECT * FROM gem_swaps WHERE chain = ? AND token = ? AND block_time >= ? ORDER BY block_time, tx_hash');
-  const getCursor = db.prepare('SELECT block, coverage_since FROM gem_cursor WHERE chain = ?');
+  const getCursor = db.prepare('SELECT block, coverage_since, updated_at FROM gem_cursor WHERE chain = ?');
   const putCursor = db.prepare(`INSERT INTO gem_cursor (chain, block, coverage_since, updated_at) VALUES (?, ?, ?, ?)
     ON CONFLICT (chain) DO UPDATE SET block = excluded.block, coverage_since = excluded.coverage_since, updated_at = excluded.updated_at`);
 
@@ -98,7 +118,7 @@ export function createSwapStore(db: DatabaseSync): SwapStore {
     insertSwaps(rows) {
       let added = 0;
       for (const r of rows) {
-        added += Number(insertSwap.run(r.chain, r.token, r.txHash, r.side, r.wallet, r.tokenAmount, r.block, r.blockTime).changes);
+        added += Number(insertSwap.run(r.chain, r.token, r.txHash, r.side, r.wallet, r.tokenAmount, r.block, r.blockTime, r.nonce ?? null, r.feeGwei ?? null).changes);
       }
       return added;
     },
@@ -106,11 +126,13 @@ export function createSwapStore(db: DatabaseSync): SwapStore {
       return selectSwaps.all(chain, token, sinceMs).map((r) => ({
         chain: String(r.chain), token: String(r.token), txHash: String(r.tx_hash), side: r.side === 'SELL' ? 'SELL' : 'BUY',
         wallet: String(r.wallet), tokenAmount: Number(r.token_amount), block: Number(r.block), blockTime: Number(r.block_time),
+        nonce: r.nonce === null || r.nonce === undefined ? null : Number(r.nonce),
+        feeGwei: r.fee_gwei === null || r.fee_gwei === undefined ? null : Number(r.fee_gwei),
       }));
     },
     cursor(chain) {
       const row = getCursor.get(chain);
-      return row ? { block: Number(row.block), coverageSince: Number(row.coverage_since) } : null;
+      return row ? { block: Number(row.block), coverageSince: Number(row.coverage_since), updatedAt: Number(row.updated_at) } : null;
     },
     saveCursor(chain, cursor, now) {
       putCursor.run(chain, cursor.block, cursor.coverageSince, now);

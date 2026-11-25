@@ -23,6 +23,9 @@ import { createEventRepository, type EventRepository } from './storage/event-rep
 import { createSwapCollector } from './gem/swap-collector.ts';
 import { createSwapStore, type SwapStore } from './gem/swap-store.ts';
 import { watchFor } from './gem/watch-policy.ts';
+import { createGemMonitor } from './gem/gem-monitor.ts';
+import { createSignalStore } from './gem/signal-store.ts';
+import { isChainId } from './wallets/wallet-repo.ts';
 import { explorerUrls, toTradeEvent, type WalletTrade } from './trades/trade-event.ts';
 import { createTradeSink } from './trades/trade-sink.ts';
 import { WalletRegistry } from './wallets/wallet-registry.ts';
@@ -122,6 +125,10 @@ function main(): void {
   const registry = new WalletRegistry(createWalletRepository(db), logger);
   const prices = createPriceBook(logger);
   const swapStore = createSwapStore(db);
+  const gemMonitor = createGemMonitor({
+    chains: config.gemSwapChains.filter(isChainId), swaps: swapStore, signals: createSignalStore(db), logger,
+    smartWallets: (chain) => new Set(registry.wallets(chain).keys()),
+  });
 
   const resolveSolanaTime = createSolanaChainTimeResolver({
     rpcUrl: config.solanaRpcUrl, logger, onResolved: (key, ms) => repo.setChainTime(key, ms),
@@ -148,6 +155,7 @@ function main(): void {
   prices.start();
   registry.start(WALLET_REFRESH_MS);
   analysis?.start();
+  gemMonitor.start();
   const adapters = buildAdapters({ config, logger, health, repo, ingest, registry, prices, swapStore });
   const sweep = wireHealth(health, notifier, logger);
   const stats = setInterval(() => logStats(health, registry, logger), STATS_INTERVAL_MS);
@@ -167,6 +175,7 @@ function main(): void {
     registry.stop();
     prices.stop();
     analysis?.stop();
+    gemMonitor.stop();
     for (const adapter of adapters) adapter.stop();
     // Give in-flight alerts a moment to record their delivery before the database closes.
     setTimeout(() => {

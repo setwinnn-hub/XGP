@@ -75,3 +75,22 @@ export async function fetchMarket(chain: ChainId, token: string, fetchFn: typeof
   if (!response.ok) throw new Error(`DexScreener HTTP ${response.status}`);
   return pickBestPair(await response.json(), token);
 }
+
+/** DexScreener accepts up to 30 token addresses per request. */
+const BATCH = 30;
+
+/** Market data for many tokens of one chain in as few requests as possible (token -> snapshot). */
+export async function fetchMarkets(chain: ChainId, tokens: readonly string[], fetchFn: typeof fetch = fetch): Promise<ReadonlyMap<string, MarketSnapshot>> {
+  const out = new Map<string, MarketSnapshot>();
+  for (let i = 0; i < tokens.length; i += BATCH) {
+    const batch = tokens.slice(i, i + BATCH);
+    const response = await fetchFn(`${DEXSCREENER}/${encodeURIComponent(chain)}/${batch.map(encodeURIComponent).join(',')}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (!response.ok) throw new Error(`DexScreener HTTP ${response.status}`);
+    const pairs: unknown = await response.json();
+    for (const token of batch) {
+      const snapshot = pickBestPair(pairs, token);
+      if (snapshot) out.set(token.toLowerCase(), snapshot);
+    }
+  }
+  return out;
+}

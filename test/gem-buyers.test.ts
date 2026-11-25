@@ -23,7 +23,7 @@ const SWAP_V2 = toEventSelector('Swap(address,uint256,uint256,uint256,uint256,ad
 const SWAP_V4 = toEventSelector('Swap(bytes32,address,int128,int128,uint160,uint128,int24,uint24)');
 
 const swap = (wallet: string, side: 'BUY' | 'SELL', minutesAgo: number, tx = `${wallet}-${minutesAgo}-${side}`): SwapRow => ({
-  chain: 'bsc', token: TOKEN, txHash: tx, side, wallet, tokenAmount: 10, block: 1, blockTime: NOW - minutesAgo * MIN,
+  chain: 'bsc', token: TOKEN, txHash: tx, side, wallet, tokenAmount: 10, block: 1, blockTime: NOW - minutesAgo * MIN, nonce: null, feeGwei: null,
 });
 
 const watch = (overrides: Partial<WatchEntry> = {}): WatchEntry => ({
@@ -99,7 +99,7 @@ describe('swap store', () => {
     assert.equal(store.insertSwaps([row, row]), 1);
     assert.deepEqual(store.swaps('bsc', TOKEN, 0), [row]);
     store.saveCursor('bsc', { block: 5, coverageSince: NOW }, NOW);
-    assert.deepEqual(store.cursor('bsc'), { block: 5, coverageSince: NOW });
+    assert.deepEqual(store.cursor('bsc'), { block: 5, coverageSince: NOW, updatedAt: NOW });
   });
 });
 
@@ -150,7 +150,7 @@ function fakeClient(logs: FakeLog[], signers: Record<string, string>, calls: { c
     getLogs: async ({ address }: { address: string[] }) =>
       logs.filter((l) => address.map((a) => a.toLowerCase()).includes(l.address)),
     multicall: async () => [{ status: 'success', result: 18 }],
-    getTransaction: async ({ hash }: { hash: string }) => ({ from: signers[hash] }),
+    getTransaction: async ({ hash }: { hash: string }) => ({ from: signers[hash], nonce: 7, maxPriorityFeePerGas: 1_500_000_000n }),
     getBlock: async ({ blockNumber }: { blockNumber: bigint }) => ({ timestamp: 1_795_700_000n + blockNumber }),
   };
   return client as unknown as PublicClient;
@@ -175,9 +175,9 @@ describe('swap collector', () => {
     const signers = { '0xbuy': '0xW1', '0xsell': '0xW2', '0xarb': '0xBOT' };
     const collector = createSwapCollector({ chain: BSC, store: createSwapStore(openDatabase(':memory:')), logger: silentLogger });
     const rows = await collector.collectRange(fakeClient(logs, signers, { count: 0 }), [watch()], 100n, 110n);
-    assert.deepEqual(rows.map((r) => [r.txHash, r.side, r.wallet, r.tokenAmount, r.blockTime]), [
-      ['0xbuy', 'BUY', '0xw1', 1_000, (1_795_700_000 + 101) * 1000],
-      ['0xsell', 'SELL', '0xw2', 400, (1_795_700_000 + 105) * 1000],
+    assert.deepEqual(rows.map((r) => [r.txHash, r.side, r.wallet, r.tokenAmount, r.blockTime, r.nonce, r.feeGwei]), [
+      ['0xbuy', 'BUY', '0xw1', 1_000, (1_795_700_000 + 101) * 1000, 7, 1.5],
+      ['0xsell', 'SELL', '0xw2', 400, (1_795_700_000 + 105) * 1000, 7, 1.5],
     ]);
   });
 
@@ -204,7 +204,7 @@ describe('swap collector', () => {
     collector.onHead(client, 111n); // reads up to head - 2
     await settle();
     assert.equal(store.swaps('bsc', TOKEN, 0).length, 1);
-    assert.deepEqual(store.cursor('bsc'), { block: 109, coverageSince: NOW - 60 * MIN });
+    assert.deepEqual(store.cursor('bsc'), { block: 109, coverageSince: NOW - 60 * MIN, updatedAt: NOW });
 
     calls.fail = true;
     now += 10_000;
@@ -241,6 +241,6 @@ describe('swap collector', () => {
     const collector = createSwapCollector({ chain: BSC, store, logger: silentLogger, now: () => NOW });
     collector.onHead(fakeClient([], {}, { count: 0 }), 10_000n);
     await new Promise((r) => setTimeout(r, 20));
-    assert.deepEqual(store.cursor('bsc'), { block: 9_998, coverageSince: NOW });
+    assert.deepEqual(store.cursor('bsc'), { block: 9_998, coverageSince: NOW, updatedAt: NOW });
   });
 });

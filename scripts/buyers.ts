@@ -1,6 +1,6 @@
 /**
- * Unique buyers of one EVM token per 1/5/15/60-minute window, read from chain logs, next to
- * DexScreener's own transaction counts for the same pool.
+ * Unique buyers of one EVM token per 1/5/15/60-minute window and its accumulation / pre-pump
+ * verdict, read from chain logs, next to DexScreener's own transaction counts for the same pool.
  *
  * Usage:
  *   npm run buyers -- <ethereum|base|bsc> <token> [minutes=60]   read the last N minutes on-chain (writes nothing)
@@ -12,6 +12,9 @@ import { findEvmChain, type EvmChainConfig } from '../src/chains/evm/chains.ts';
 import { httpUrlFor, loadConfig } from '../src/config.ts';
 import { createLogger, errorMessage } from '../src/core/logger.ts';
 import { buyerWindows, type WindowStats } from '../src/gem/buyer-stats.ts';
+import { detectAccumulation, type PriceContext } from '../src/gem/accumulation.ts';
+import { createWalletRepository } from '../src/wallets/wallet-repo.ts';
+import type { MarketSnapshot } from '../src/analysis/market.ts';
 import { createSwapCollector, tokenCoverageSince } from '../src/gem/swap-collector.ts';
 import { createSwapStore, type SwapRow } from '../src/gem/swap-store.ts';
 import { watchFor } from '../src/gem/watch-policy.ts';
@@ -41,6 +44,33 @@ function printWindows(windows: readonly WindowStats[]): void {
   for (const w of windows) {
     process.stdout.write(`${String(w.minutes).padStart(4)}m | ${w.complete ? 'yes' : 'NO '}      | ${w.buys} | ${w.sells} | ${w.uniqueBuyers} | ${w.newBuyers} | ${w.returningBuyers} | ${w.multiBuyWallets} | ${pct(w.uniqueBuyersGrowthPct)}\n`);
   }
+}
+
+function smartWallets(chainId: string): ReadonlySet<string> {
+  const repo = createWalletRepository(openDatabase(loadConfig().dbPath));
+  return new Set(repo.list().filter((w) => w.chain === chainId).map((w) => w.address.toLowerCase()));
+}
+
+const priceOf = (m: MarketSnapshot | null): PriceContext | null => (m ? { changeM5Pct: m.priceChangePct.m5, changeH1Pct: m.priceChangePct.h1 } : null);
+
+/** Accumulation / pre-pump verdict on the same rows (Stage 7). */
+function printAccumulation(chainId: string, rows: readonly SwapRow[], now: number, coverageSince: number, market: MarketSnapshot | null): void {
+  const r = detectAccumulation({ swaps: rows, now, coverageSince, smartWallets: smartWallets(chainId), price: priceOf(market) });
+  const m = r.metrics;
+  const f = (n: number | null, d = 2): string => (n === null ? '-' : n.toFixed(d));
+  process.stdout.write(`
+Accumulation: ${r.status} (confidence ${r.confidence})
+`);
+  for (const reason of r.reasons) process.stdout.write(`  - ${reason}
+`);
+  process.stdout.write(`  independent buyers 5m/15m ${m.independentBuyers5m}/${m.independentBuyers15m} | baseline/5m ${f(m.baselinePer5m, 1)} | acceleration ${f(m.acceleration, 1)}x
+`);
+  process.stdout.write(`  buy pressure 5m/15m ${f(m.buyPressure5m)}/${f(m.buyPressure15m)} | holders (bought, not sold) 15m ${m.netAccumulators15m} | repeat buyers ${m.repeatBuyers15m}
+`);
+  process.stdout.write(`  clustered share 15m ${(m.clusteredShare15m * 100).toFixed(0)}% | clusters ${r.clusters.length} | smart money buyers 60m ${m.smartMoneyBuyers60m} | price 1h ${f(m.priceChangeH1Pct, 0)}%
+`);
+  for (const c of r.clusters.slice(0, 5)) process.stdout.write(`  cluster of ${c.wallets.length}: ${c.evidence.join(', ')} (${c.wallets.slice(0, 3).map((w) => w.slice(0, 10)).join(', ')}${c.wallets.length > 3 ? ', ...' : ''})
+`);
 }
 
 /** First block at or after `targetMs`, found by sampling the average block time. */
@@ -81,11 +111,12 @@ async function fromChain(chain: EvmChainConfig, token: string, minutes: number):
   }
   process.stdout.write(`${rows.length} netted swaps from ${new Set(rows.map((r) => r.wallet)).size} wallets in ${((Date.now() - started) / 1000).toFixed(1)}s\n\n`);
   printWindows(buyerWindows(rows, headMs, fromMs));
+  printAccumulation(chain.id, rows, headMs, fromMs, market);
   const dex = await dexCounts(chain.id, token, market.pairAddress).catch(() => null);
   process.stdout.write(`\nDexScreener (same pool, counts swaps not wallets): m5 ${dex?.m5 ?? '-'} | h1 ${dex?.h1 ?? '-'}\n`);
 }
 
-function fromStore(chainId: string, token: string): void {
+async function fromStore(chainId: EvmChainConfig['id'], token: string): Promise<void> {
   const store = createSwapStore(openDatabase(loadConfig().dbPath));
   const watch = store.findWatch(chainId, token) ?? store.findWatch(chainId, token.toLowerCase());
   const cursor = store.cursor(chainId);
@@ -93,7 +124,11 @@ function fromStore(chainId: string, token: string): void {
   const now = Date.now();
   const rows = store.swaps(chainId, watch.token, now - 2 * 60 * 60_000);
   process.stdout.write(`\n${chainId} ${watch.token} (${watch.symbol ?? '?'}) watched until ${new Date(watch.expiresAt).toISOString()} | cursor block ${cursor.block}\n\n`);
-  printWindows(buyerWindows(rows, now, tokenCoverageSince(watch, cursor.coverageSince)));
+  const asOf = Math.min(now, cursor.updatedAt);
+  const coverage = tokenCoverageSince(watch, cursor.coverageSince);
+  printWindows(buyerWindows(rows, asOf, coverage));
+  const market = await fetchMarket(chainId, watch.token).catch(() => null);
+  printAccumulation(chainId, rows, asOf, coverage, market);
 }
 
 async function main(): Promise<void> {

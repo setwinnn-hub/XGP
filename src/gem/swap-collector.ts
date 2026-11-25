@@ -138,11 +138,13 @@ export function createSwapCollector(deps: SwapCollectorDeps): SwapCollector {
     const swaps = netSwaps(transfers, swapTxs);
     if (swaps.length === 0) return [];
     await loadDecimals(client, [...new Set(swaps.map((s) => s.token))]);
-    const signers = new Map<string, string>();
+    const signers = new Map<string, { from: string; nonce: number; feeGwei: number | null }>();
     const hashes = [...new Set(swaps.map((s) => s.txHash))];
     for (let i = 0; i < hashes.length; i += TX_CONCURRENCY) {
       await Promise.all(hashes.slice(i, i + TX_CONCURRENCY).map(async (h) => {
-        signers.set(h, (await client.getTransaction({ hash: h as Hex })).from.toLowerCase());
+        const tx = await client.getTransaction({ hash: h as Hex });
+        const fee = tx.maxPriorityFeePerGas ?? tx.gasPrice ?? null;
+        signers.set(h, { from: tx.from.toLowerCase(), nonce: Number(tx.nonce), feeGwei: fee === null ? null : Number(fee) / 1e9 });
       }));
     }
     const tokenByLower = new Map(watches.map((w) => [w.token.toLowerCase(), w.token]));
@@ -152,7 +154,7 @@ export function createSwapCollector(deps: SwapCollectorDeps): SwapCollector {
       to === from ? toMs : Math.round(fromMs + ((block - Number(from)) * (toMs - fromMs)) / Number(to - from));
     return swaps.map((s) => ({
       chain: chain.id, token: tokenByLower.get(s.token) ?? s.token, txHash: s.txHash, side: s.side,
-      wallet: signers.get(s.txHash) ?? 'unknown', tokenAmount: Number(s.raw) / 10 ** (decimals.get(s.token) ?? 18),
+      wallet: signers.get(s.txHash)?.from ?? 'unknown', nonce: signers.get(s.txHash)?.nonce ?? null, feeGwei: signers.get(s.txHash)?.feeGwei ?? null, tokenAmount: Number(s.raw) / 10 ** (decimals.get(s.token) ?? 18),
       block: s.block, blockTime: timeOf(s.block),
     }));
   };
