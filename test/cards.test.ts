@@ -105,7 +105,7 @@ describe('Discord upload with a card', () => {
     const init = await deliver(async () => Buffer.from([0xff, 0xd8, 0xff]));
     assert.ok(init?.body instanceof FormData);
     const json = JSON.parse(String((init.body as FormData).get('payload_json')));
-    assert.equal(json.embeds[0].image, undefined, 'card goes as a plain attachment (shown larger)');
+    assert.equal(json.embeds[0].image.url, 'attachment://card.jpg', 'card sits inside the embed frame');
     assert.deepEqual(json.attachments, [{ id: 0, filename: 'card.jpg' }]);
     assert.ok((init.body as FormData).get('files[0]') instanceof Blob);
     assert.equal(json.embeds.length, 1);

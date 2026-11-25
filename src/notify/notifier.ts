@@ -116,8 +116,9 @@ export function createNotifier(deps: NotifierDeps): Notifier {
         color: first.color,
         description: [timing, caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
         fields: [],
-        // The card is a plain attachment, not an embed image: Discord shows attachments larger
-        // (up to ~550 px wide instead of ~400), so its text stays readable.
+        // Inside the embed frame (the user's choice). Discord shows embed images ~400 px wide,
+        // which is why the card's text is sized large.
+        image: { url: `attachment://${CARD_FILE}` },
         ...(first.footer ? { footer: first.footer } : {}),
         ...(first.timestamp ? { timestamp: first.timestamp } : {}),
       };
