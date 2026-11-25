@@ -182,7 +182,7 @@ describe('TrendTracker', () => {
     const later = trendEvent({ symbol: 'WIF', mentions: 3, sources: ['A', 'B'], windowMs: at(60), cooldownMs: at(360), examples: [] }, at(200));
     assert.equal(event.key, later.key, 'same cooldown bucket => same key => DB dedupe blocks a repeat after restart');
     const embed = buildTrendAlert(event).embeds[0];
-    assert.ok(embed?.title.includes('$WIF'));
+    assert.ok(embed?.title?.includes('$WIF'));
     assert.ok(embed?.description?.includes('https://a/1'));
     assert.equal(decideAlert(event, testConfig()).alert, true);
   });

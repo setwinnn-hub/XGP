@@ -12,7 +12,6 @@ export const CHECKPOINTS_H = [1, 6, 24] as const;
 const GRACE_MS = 2 * HOUR;
 const TICK_MS = 5 * 60_000;
 const SUMMARY_HOUR_LOCAL = 9;
-const UTC_OFFSET_MIN = 7 * 60;
 
 export interface AlertTrackerDeps {
   readonly db: DatabaseSync;
@@ -21,6 +20,8 @@ export interface AlertTrackerDeps {
   /** Posts to the room where opportunity alerts go. */
   readonly send: (payload: DiscordPayload) => Promise<unknown>;
   readonly now?: () => number;
+  /** IANA zone for the 09:00 summary; default is this machine's time zone. */
+  readonly timeZone?: string;
 }
 
 export interface AlertTracker {
@@ -39,13 +40,13 @@ interface AlertRow {
   readonly score: number | null;
 }
 
-/** "2026-11-26" in Bangkok time. */
-function localDay(ms: number): string {
-  return new Date(ms + UTC_OFFSET_MIN * 60_000).toISOString().slice(0, 10);
-}
-
-function localHour(ms: number): number {
-  return new Date(ms + UTC_OFFSET_MIN * 60_000).getUTCHours();
+/** Calendar day ("2026-11-26") and hour in the given time zone (default: this machine's). */
+function localParts(ms: number, timeZone?: string): { day: string; hour: number } {
+  const parts = new Intl.DateTimeFormat('en-CA', {
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23', ...(timeZone ? { timeZone } : {}),
+  }).formatToParts(ms);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  return { day: `${get('year')}-${get('month')}-${get('day')}`, hour: Number(get('hour')) };
 }
 
 /**
@@ -108,8 +109,8 @@ export function createAlertTracker(deps: AlertTrackerDeps): AlertTracker {
   };
 
   const dailySummary = async (t: number): Promise<void> => {
-    const day = localDay(t);
-    if (localHour(t) < SUMMARY_HOUR_LOCAL || reportedStmt.get(day)) return;
+    const { day, hour } = localParts(t, deps.timeZone);
+    if (hour < SUMMARY_HOUR_LOCAL || reportedStmt.get(day)) return;
     const rows: SummaryRow[] = [];
     for (const a of alertsSince(t - 24 * HOUR)) {
       const price = a.priceUsd === null ? null : await priceNow(a);

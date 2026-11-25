@@ -10,7 +10,7 @@ export interface EmbedField {
 export interface Embed {
   /** Small line above the title: alert type and chain. */
   readonly author?: { readonly name: string; readonly url?: string };
-  readonly title: string;
+  readonly title?: string;
   readonly description?: string;
   readonly color: number;
   readonly fields: readonly EmbedField[];

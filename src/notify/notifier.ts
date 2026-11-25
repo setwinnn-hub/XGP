@@ -5,7 +5,7 @@ import { fetchDexScreenerTokenName, type TokenName } from '../enrich/dexscreener
 import type { EventRepository } from '../storage/event-repo.ts';
 import { WebhookQueue, type DiscordPayload, type SendOutcome } from './discord-client.ts';
 import { decideAlert } from './filters.ts';
-import { buildSystemAlert, buildTokenAlert } from './format.ts';
+import { buildSystemAlert, buildTokenAlert, caBlock, linkRow } from './format.ts';
 import { buildTradeAlert } from './format-trade.ts';
 import { buildNewsAlert, buildTrendAlert } from './format-news.ts';
 import { buildAnalysisAlert } from './format-analysis.ts';
@@ -91,17 +91,23 @@ export function createNotifier(deps: NotifierDeps): Notifier {
   };
 
   /** Adds the picture card to the first embed; on any failure or slowness the alert goes without it. */
-  const withCard = async (payload: DiscordPayload, card: CardData): Promise<DiscordPayload> => {
+  const withCard = async (event: RadarEvent, payload: DiscordPayload, card: CardData): Promise<DiscordPayload> => {
     if (!deps.renderCard) return payload;
     try {
       const image = await withTimeout(deps.renderCard(card), CARD_RENDER_TIMEOUT_MS);
-      const [first, ...rest] = payload.embeds;
+      const [first] = payload.embeds;
       if (!first) return payload;
-      return {
-        ...payload,
-        embeds: [{ ...first, image: { url: `attachment://${CARD_FILE}` } }, ...rest],
-        files: [{ name: CARD_FILE, data: image, contentType: 'image/jpeg' }],
+      // The card carries everything else; only what a picture cannot do stays as text:
+      // the contract address to copy and the links to click.
+      const compact = {
+        color: first.color,
+        description: [caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
+        fields: [],
+        image: { url: `attachment://${CARD_FILE}` },
+        ...(first.footer ? { footer: first.footer } : {}),
+        ...(first.timestamp ? { timestamp: first.timestamp } : {}),
       };
+      return { embeds: [compact], files: [{ name: CARD_FILE, data: image, contentType: 'image/jpeg' }] };
     } catch (error: unknown) {
       logger.warn('card render failed, sending without it', { error: errorMessage(error) });
       return payload;
@@ -144,7 +150,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     const priorSameSide = deps.repo.countPriorTrades(
       event.chain, String(event.details.wallet), event.tokenAddress, String(event.details.side), event.detectedAt,
     );
-    const payload = await withCard(buildTradeAlert(event, { isWhale, priorSameSide }), tradeCard(event, { isWhale, priorSameSide }));
+    const payload = await withCard(event, buildTradeAlert(event, { isWhale, priorSameSide }), tradeCard(event, { isWhale, priorSameSide }));
     await send(event, category, payload, true);
     // Copy only to a dedicated WHALE webhook, never to the DEFAULT fallback.
     const whaleUrl = deps.config.webhooks.WHALE;
@@ -159,10 +165,10 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       }
       if (event.kind === 'wallet_trade') return sendTrade(event, decision.category);
       if (event.kind === 'trending') return send(event, decision.category, buildTrendAlert(event), true);
-      if (event.kind === 'analysis') return send(event, decision.category, await withCard(buildAnalysisAlert(event), analysisCard(event)), true);
+      if (event.kind === 'analysis') return send(event, decision.category, await withCard(event, buildAnalysisAlert(event), analysisCard(event)), true);
       if (event.kind === 'news') return send(event, decision.category, buildNewsAlert(event, await newsImage(event)), true);
       const named = event.kind === 'token_migrated' ? await withName(event) : event;
-      await send(named, decision.category, await withCard(buildTokenAlert(named), tokenCard(named)), true);
+      await send(named, decision.category, await withCard(named, buildTokenAlert(named), tokenCard(named)), true);
     },
     async system(text, ok) {
       const target = queues.get('SYSTEM');

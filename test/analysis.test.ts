@@ -172,7 +172,7 @@ describe('AnalysisEngine', () => {
       alert: 'risk', opportunity: 5, risk: 'CRITICAL', positives: '["Volume สูง"]', risks: '["[CRITICAL] Honeypot"]', liquidityUsd: 41_768, marketCapUsd: 7.9e9, smartBuyers: 1,
     } });
     const embed = buildAnalysisAlert(event).embeds[0];
-    assert.ok(embed?.title.startsWith('🚨 HIGH RISK'));
+    assert.ok(embed?.title?.startsWith('🚨 HIGH RISK'));
     assert.ok(embed?.description?.includes('Honeypot'));
     assert.ok(JSON.stringify(embed?.fields).includes('$7.90B'));
     assert.equal(decideAlert(event, testConfig()).alert, true);

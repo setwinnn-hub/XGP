@@ -5,9 +5,12 @@ import { chainLabel, money, shortAddress } from './format.ts';
 const RISK_TH: Readonly<Record<string, string>> = { LOW: 'ความเสี่ยง ต่ำ', MEDIUM: 'ความเสี่ยง กลาง', HIGH: 'ความเสี่ยง สูง', CRITICAL: 'ความเสี่ยง วิกฤต' };
 const VENUES: Readonly<Record<string, string>> = { 'pump-amm': 'PumpSwap', raydium: 'Raydium' };
 
-/** "01:13" in Bangkok time. */
-export function bangkokTime(ms: number): string {
-  return new Date(ms + 7 * 3_600_000).toISOString().slice(11, 16);
+/**
+ * "01:13" in the given time zone; default is this machine's, which is what Discord shows the
+ * user when they read alerts on it.
+ */
+export function clockTime(ms: number, timeZone?: string): string {
+  return new Intl.DateTimeFormat('en-GB', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23', ...(timeZone ? { timeZone } : {}) }).format(ms);
 }
 
 function amount(n: number): string {
@@ -36,7 +39,7 @@ export function tokenCard(event: RadarEvent): CardData {
     ...(typeof d.devBuySol === 'number' ? [{ label: 'Dev ซื้อเอง', value: `${amount(d.devBuySol)} SOL` }] : []),
     ...(typeof d.marketCapSol === 'number' ? [{ label: 'Market Cap', value: `${amount(d.marketCapSol)} SOL` }] : []),
     ...(typeof d.quoteSymbol === 'string' ? [{ label: 'จับคู่กับ', value: d.quoteSymbol }] : []),
-    { label: 'ตรวจพบ', value: bangkokTime(event.detectedAt) },
+    { label: 'ตรวจพบ', value: clockTime(event.detectedAt) },
   ].slice(0, 3);
   if (event.kind === 'token_migrated') {
     const venue = typeof d.migratedTo === 'string' ? (VENUES[d.migratedTo] ?? d.migratedTo) : 'DEX';

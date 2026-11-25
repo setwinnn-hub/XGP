@@ -30,7 +30,7 @@ function setup(prices: Record<string, number>) {
   const sent: DiscordPayload[] = [];
   let now = T0;
   const tracker = createAlertTracker({
-    db, logger: silentLogger, now: () => now,
+    db, logger: silentLogger, now: () => now, timeZone: 'Asia/Bangkok',
     fetchMarket: async (_chain, token) => (token in prices ? market(prices[token]!) : null),
     send: async (payload) => { sent.push(payload); },
   });

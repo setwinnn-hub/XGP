@@ -92,7 +92,7 @@ describe('EARLY GEM alerts', () => {
     assert.equal(h.sent.length, 1);
     assert.equal(h.sent[0]!.category, 'EARLY_GEM');
     assert.equal(h.sent[0]!.edit, null);
-    assert.match(h.sent[0]!.payload.embeds[0]!.title, /EARLY GEM DETECTED/);
+    assert.match(h.sent[0]!.payload.embeds[0]!.title ?? '', /EARLY GEM DETECTED/);
     const id = h.watchlist.get('bsc', TOKEN)!.messageId!;
     await h.feed(rec('HIGH_POTENTIAL', 77, 3));
     assert.equal(h.sent.length, 1, 'small score change and inside the edit interval: no edit');
@@ -159,9 +159,9 @@ describe('EARLY GEM alerts', () => {
     assert.match(e.description ?? '', /\[Chart\]\(https:\/\/dexscreener\.com\/bsc\/0xpair\)/);
     assert.match(e.description ?? '', /\[Explorer\]\(https:\/\/bscscan\.com\/token\//);
     // Discord embed limits: 25 fields, 256-char title, 1024-char field values, 4096-char description, 6000 total.
-    assert.ok(e.fields.length <= 25 && e.title.length <= 256 && (e.description ?? '').length <= 4096);
+    assert.ok(e.fields.length <= 25 && (e.title ?? '').length <= 256 && (e.description ?? '').length <= 4096);
     assert.ok(e.fields.every((f) => f.value.length > 0 && f.value.length <= 1024 && f.name.length <= 256));
-    const total = e.title.length + (e.description ?? '').length + e.fields.reduce((n, f) => n + f.name.length + f.value.length, 0) + (e.footer?.text.length ?? 0);
+    const total = (e.title ?? '').length + (e.description ?? '').length + e.fields.reduce((n, f) => n + f.name.length + f.value.length, 0) + (e.footer?.text.length ?? 0);
     assert.ok(total <= 6000, `embed is ${total} chars`);
   });
 });

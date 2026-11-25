@@ -6,7 +6,7 @@ import { describe, it } from 'node:test';
 import sharp from 'sharp';
 import { silentLogger } from '../src/core/logger.ts';
 import type { RadarEvent } from '../src/core/types.ts';
-import { analysisCard, bangkokTime, tokenCard, tradeCard } from '../src/notify/card-data.ts';
+import { analysisCard, clockTime, tokenCard, tradeCard } from '../src/notify/card-data.ts';
 import { createCardRenderer } from '../src/notify/card-render.ts';
 import { buildCardSvg, clip } from '../src/notify/card.ts';
 import { requestBody } from '../src/notify/discord-client.ts';
@@ -18,11 +18,11 @@ import { makeEvent, testConfig, WEBHOOK_URL } from './helpers.ts';
 const NOW = Date.parse('2026-11-25T18:13:00Z');
 
 describe('card data', () => {
-  it('new token card: badge, contract, dev buy, market cap and Bangkok time', () => {
+  it('new token card: badge, contract, dev buy, market cap and detection time', () => {
     const card = tokenCard(makeEvent({ detectedAt: NOW, details: { platform: 'Pump.fun', devBuySol: 2.47, marketCapSol: 32.8 } }));
     assert.ok(card.badge.startsWith('NEW TOKEN · SOLANA'));
     assert.equal(card.title, '$DOOROC');
-    assert.deepEqual(card.stats.map((s) => s.value), ['2.47 SOL', '32.8 SOL', '01:13']);
+    assert.deepEqual(card.stats.map((s) => s.value), ['2.47 SOL', '32.8 SOL', clockTime(NOW)]);
     assert.equal(card.side.big, 'NEW');
   });
 
@@ -40,8 +40,9 @@ describe('card data', () => {
     assert.ok(card.stats.some((s) => s.label === 'ผู้ถือ'));
   });
 
-  it('formats Bangkok time', () => {
-    assert.equal(bangkokTime(NOW), '01:13');
+  it('formats clock time in a given zone', () => {
+    assert.equal(clockTime(NOW, 'Asia/Bangkok'), '01:13');
+    assert.equal(clockTime(NOW, 'Europe/Kiev'), '20:13');
   });
 });
 
@@ -105,6 +106,11 @@ describe('Discord upload with a card', () => {
     assert.ok(init?.body instanceof FormData);
     const json = JSON.parse(String((init.body as FormData).get('payload_json')));
     assert.equal(json.embeds[0].image.url, 'attachment://card.jpg');
+    assert.equal(json.embeds.length, 1);
+    assert.equal(json.embeds[0].title, undefined, 'the card carries the title: no duplicate text');
+    assert.deepEqual(json.embeds[0].fields, []);
+    assert.ok(json.embeds[0].description.includes('```GwytBanGx9eS55TpbG3w6veLtT8PKRcs3SXiS7nFpump```'), 'contract stays copyable');
+    assert.ok(json.embeds[0].description.includes('Pump.fun'), 'links stay clickable');
   });
 
   it('still sends the alert (as plain JSON) when the card cannot be drawn', async () => {
