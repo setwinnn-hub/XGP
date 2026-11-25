@@ -18,6 +18,14 @@ export interface GemSettings {
   /** Early Gem Score category weights (any non-negative numbers; the score is scaled to 100). */
   readonly weights: ScoreWeights;
   readonly thresholds: ScoreThresholds;
+  /** Discord EARLY GEM / GEM RISK alerts on or off. */
+  readonly gemAlertsEnabled: boolean;
+  /** Minimum time between two new EARLY GEM messages for the same token. */
+  readonly alertCooldownMin: number;
+  /** Minimum time between edits of a token's existing message. */
+  readonly editIntervalMin: number;
+  /** Consecutive one-minute passes a new class must hold before the watchlist moves a token up or down. */
+  readonly confirmPasses: number;
 }
 
 /** Market cap defaults confirmed by the user on 2026-11-25 (Pump.fun's floor is ~66,000 THB). */
@@ -32,6 +40,10 @@ export const DEFAULT_GEM_SETTINGS: GemSettings = {
   minIndependentWallets: 6,
   weights: DEFAULT_WEIGHTS,
   thresholds: DEFAULT_THRESHOLDS,
+  gemAlertsEnabled: true,
+  alertCooldownMin: 60,
+  editIntervalMin: 5,
+  confirmPasses: 2,
 };
 
 const KEY = 'gem';
@@ -76,6 +88,10 @@ export function normalizeSettings(raw: unknown): GemSettings {
     minIndependentWallets: validNumber(r.minIndependentWallets, d.minIndependentWallets, 0, 1e6),
     weights: normalizeWeights(r.weights),
     thresholds: normalizeThresholds(r.thresholds),
+    gemAlertsEnabled: typeof r.gemAlertsEnabled === 'boolean' ? r.gemAlertsEnabled : d.gemAlertsEnabled,
+    alertCooldownMin: validNumber(r.alertCooldownMin, d.alertCooldownMin, 0, 7 * 24 * 60),
+    editIntervalMin: validNumber(r.editIntervalMin, d.editIntervalMin, 1, 24 * 60),
+    confirmPasses: Math.round(validNumber(r.confirmPasses, d.confirmPasses, 1, 10)),
   };
 }
 

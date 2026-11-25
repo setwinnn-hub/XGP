@@ -26,7 +26,7 @@ export interface DiscordPayload {
 }
 
 export type SendOutcome =
-  | { readonly status: 'sent'; readonly discordAt: number | null }
+  | { readonly status: 'sent'; readonly discordAt: number | null; readonly messageId?: string | null }
   | { readonly status: 'failed'; readonly error: string }
   | { readonly status: 'dropped'; readonly error: string };
 
@@ -62,16 +62,26 @@ export class WebhookQueue {
   }
 
   send(payload: DiscordPayload): Promise<SendOutcome> {
+    return this.enqueue(payload, null);
+  }
+
+  /** Replaces a message this webhook sent earlier (PATCH /messages/{id}); same queue and rate limit. */
+  edit(messageId: string, payload: DiscordPayload): Promise<SendOutcome> {
+    if (!/^\d{5,25}$/.test(messageId)) return Promise.resolve({ status: 'failed', error: 'invalid message id' });
+    return this.enqueue(payload, messageId);
+  }
+
+  private enqueue(payload: DiscordPayload, messageId: string | null): Promise<SendOutcome> {
     if (this.pending >= this.maxPending) {
       return Promise.resolve({ status: 'dropped', error: `queue full (${this.maxPending})` });
     }
     this.pending += 1;
-    const result = this.tail.then(() => this.deliver(payload)).finally(() => { this.pending -= 1; });
+    const result = this.tail.then(() => this.deliver(payload, messageId)).finally(() => { this.pending -= 1; });
     this.tail = result.catch(() => undefined);
     return result;
   }
 
-  private async deliver(payload: DiscordPayload): Promise<SendOutcome> {
+  private async deliver(payload: DiscordPayload, messageId: string | null): Promise<SendOutcome> {
     let failures = 0;
     let rateLimitWaits = 0;
     let lastError = 'unknown';
@@ -79,7 +89,7 @@ export class WebhookQueue {
       const wait = Math.min(this.pauseUntil - Date.now(), MAX_WAIT_MS);
       if (wait > 0) await sleep(wait);
       try {
-        const step = await this.post(payload);
+        const step = await this.post(payload, messageId);
         if (step.done) return step.outcome;
         lastError = step.error;
         if (step.retryAfterMs !== undefined) {
@@ -99,13 +109,14 @@ export class WebhookQueue {
     return { status: 'failed', error: lastError };
   }
 
-  private async post(payload: DiscordPayload): Promise<
+  private async post(payload: DiscordPayload, messageId: string | null): Promise<
     | { readonly done: true; readonly outcome: SendOutcome }
     | { readonly done: false; readonly error: string; readonly retryAfterMs?: number }
   > {
     const body = JSON.stringify({ ...payload, allowed_mentions: { parse: [] } });
-    const response = await this.fetchFn(`${this.url}?wait=true`, {
-      method: 'POST',
+    const target = messageId ? `${this.url}/messages/${messageId}` : `${this.url}?wait=true`;
+    const response = await this.fetchFn(target, {
+      method: messageId ? 'PATCH' : 'POST',
       headers: { 'content-type': 'application/json' },
       body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
@@ -113,8 +124,8 @@ export class WebhookQueue {
     this.applyRateLimitHeaders(response.headers);
     if (response.ok) {
       const json = (await response.json().catch(() => null)) as { id?: unknown } | null;
-      const discordAt = typeof json?.id === 'string' ? snowflakeToMs(json.id) : null;
-      return { done: true, outcome: { status: 'sent', discordAt } };
+      const id = typeof json?.id === 'string' ? json.id : null;
+      return { done: true, outcome: { status: 'sent', discordAt: id && !messageId ? snowflakeToMs(id) : null, messageId: id } };
     }
     if (response.status === 429) {
       const json = (await response.json().catch(() => null)) as { retry_after?: unknown } | null;

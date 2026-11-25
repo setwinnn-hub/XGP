@@ -2,6 +2,11 @@ import type { TokenRef } from '../analysis/analysis-engine.ts';
 import type { MarketSnapshot } from '../analysis/market.ts';
 import type { WatchEntry } from './swap-store.ts';
 
+/** A brand-new pair is watched this long; analysis or the watchlist extend it. */
+export const NEW_PAIR_TTL_MS = 90 * 60_000;
+/** Tokens on the Early Gem watchlist stay collected for a day after their last promotion. */
+export const WATCHLIST_TTL_MS = 24 * 60 * 60_000;
+
 /** How long a token's swaps are collected after its latest analysis. */
 export const WATCH_TTL_MS = 6 * 60 * 60_000;
 
@@ -30,4 +35,15 @@ export function watchFor(ref: TokenRef, market: Pick<MarketSnapshot, 'pairAddres
     chain: ref.chain, token: ref.token, pool: pool.toLowerCase(), poolKind,
     symbol: ref.symbol, reason: 'analysed', addedAt: now, expiresAt: now + WATCH_TTL_MS,
   };
+}
+
+/**
+ * Watch a pair from its creation event, before DexScreener lists it: the event already has the
+ * on-chain pool (V2/V3 pair address or V4 pool id). Market cap is unknown this early, so the
+ * $1M cap is applied later by the scoring (REJECTED above range).
+ */
+export function watchForNewPair(ref: TokenRef, pairId: unknown, now: number): WatchEntry | null {
+  if (typeof pairId !== 'string') return null;
+  const entry = watchFor(ref, { pairAddress: pairId, marketCapUsd: null, fdvUsd: null }, now);
+  return entry ? { ...entry, reason: 'new-pair', expiresAt: now + NEW_PAIR_TTL_MS } : null;
 }

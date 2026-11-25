@@ -1,6 +1,8 @@
 import { EVM_CHAINS, type EvmChainConfig, type EvmChainId } from './chains/evm/chains.ts';
 
 export const ALERT_CATEGORIES = [
+  'EARLY_GEM',
+  'GEM_RISK',
   'NEW_TOKEN',
   'SMART_MONEY_BUY',
   'SMART_MONEY_SELL',

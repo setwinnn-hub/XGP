@@ -23,7 +23,10 @@ import { openDatabase } from './storage/db.ts';
 import { createEventRepository, type EventRepository } from './storage/event-repo.ts';
 import { createSwapCollector } from './gem/swap-collector.ts';
 import { createSwapStore, type SwapStore } from './gem/swap-store.ts';
-import { watchFor } from './gem/watch-policy.ts';
+import { WATCHLIST_TTL_MS, watchFor, watchForNewPair } from './gem/watch-policy.ts';
+import { createWatchlist } from './gem/watchlist.ts';
+import { createGemAlerts } from './gem/gem-alerts.ts';
+import { gemLinks } from './notify/format-gem.ts';
 import { createGemMonitor } from './gem/gem-monitor.ts';
 import { createSignalStore } from './gem/signal-store.ts';
 import { isChainId } from './wallets/wallet-repo.ts';
@@ -144,6 +147,19 @@ function main(): void {
   const prices = createPriceBook(logger);
   const swapStore = createSwapStore(db);
   const gemSettings = createSettingsRepository(db);
+  const gemAlerts = createGemAlerts({
+    watchlist: createWatchlist(db), settings: () => gemSettings.get(), logger,
+    send: (category, payload, editId) => notifier.gem(category, payload, editId),
+    links: (chain, token) => {
+      const evm = findEvmChain(chain);
+      return gemLinks(evm?.dexscreenerSlug ?? null, evm?.explorerTokenUrl ?? null, token);
+    },
+    // Watchlisted tokens keep their swap collection (and their slot) for a day.
+    onListed: (r) => {
+      const w = swapStore.findWatch(r.chain, r.token);
+      if (w) swapStore.watch({ ...w, reason: 'watchlist', expiresAt: Date.now() + WATCHLIST_TTL_MS });
+    },
+  });
   const gemMonitor = createGemMonitor({
     chains: config.gemSwapChains.filter(isChainId), swaps: swapStore, signals: createSignalStore(db), logger,
     smartWallets: (chain) => new Set(registry.wallets(chain).keys()),
@@ -163,6 +179,7 @@ function main(): void {
       fx: () => prices.fxRate(),
       fetchSupply: (chain, token) => fetchOnchainSupply(chain, token, config.solanaRpcUrl),
       trackedWallets: (chain) => registry.wallets(chain).size,
+      onScored: (record) => gemAlerts.onScored(record),
       newsMentions: (symbol) => (symbol && /^[A-Za-z0-9]{3,12}$/.test(symbol) ? repo.countNewsMentions(symbol, Date.now() - 24 * 3_600_000) : null),
     },
   });
@@ -184,6 +201,12 @@ function main(): void {
   bus.subscribe('analysis', (event) => {
     const ref = analysis ? tokenToAnalyse(event, decideAlert(event, config).alert) : null;
     if (ref) analysis?.schedule(ref, event.kind === 'wallet_trade');
+  });
+  // Early Gem: start collecting a new EVM pair's swaps at creation, before DexScreener lists it.
+  bus.subscribe('gem-new-pair', (event) => {
+    if (event.kind !== 'pair_created' || !config.gemSwapChains.includes(event.chain)) return;
+    const entry = watchForNewPair({ chain: event.chain, token: event.tokenAddress, symbol: event.tokenSymbol, name: event.tokenName }, event.details.pairId, Date.now());
+    if (entry) swapStore.watch(entry);
   });
   bus.subscribe('solana-chain-time', (event) => {
     if (event.chain !== 'solana' || event.source === 'solana-rpc') return;

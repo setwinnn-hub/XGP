@@ -3,7 +3,7 @@ import { errorMessage, type Logger } from '../core/logger.ts';
 import type { RadarEvent } from '../core/types.ts';
 import { fetchDexScreenerTokenName, type TokenName } from '../enrich/dexscreener.ts';
 import type { EventRepository } from '../storage/event-repo.ts';
-import { WebhookQueue, type DiscordPayload } from './discord-client.ts';
+import { WebhookQueue, type DiscordPayload, type SendOutcome } from './discord-client.ts';
 import { decideAlert } from './filters.ts';
 import { buildSystemAlert, buildTokenAlert } from './format.ts';
 import { buildTradeAlert } from './format-trade.ts';
@@ -28,6 +28,11 @@ export interface Notifier {
   handle(event: RadarEvent): Promise<void>;
   system(text: string, ok: boolean): Promise<void>;
   dryRunCategories(): readonly AlertCategory[];
+  /**
+   * Early Gem alerts: posts a new message, or edits `editMessageId` in place. Returns null when
+   * the category has no webhook (dry run, logged only).
+   */
+  gem(category: 'EARLY_GEM' | 'GEM_RISK', payload: DiscordPayload, editMessageId: string | null): Promise<SendOutcome | null>;
 }
 
 /**
@@ -133,6 +138,17 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     },
     dryRunCategories() {
       return ALERT_CATEGORIES.filter((category) => !queues.has(category));
+    },
+    async gem(category, payload, editMessageId) {
+      const target = queues.get(category);
+      if (!target) {
+        logger.info('ALERT (dry run: no webhook)', { category, title: payload.embeds[0]?.title ?? '' });
+        return null;
+      }
+      const outcome = editMessageId ? await target.queue.edit(editMessageId, payload) : await target.queue.send(payload);
+      if (outcome.status === 'sent') logger.info(editMessageId ? 'ALERT edited' : 'ALERT sent', { category, title: payload.embeds[0]?.title ?? '' });
+      else logger.error('ALERT not delivered', { category, status: outcome.status, error: outcome.error });
+      return outcome;
     },
   };
 }

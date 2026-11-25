@@ -51,6 +51,15 @@ CREATE TABLE IF NOT EXISTS gem_cursor (
 );
 `;
 
+/**
+ * Why a token is watched, highest priority first: the collector reads only the first 40
+ * watches per chain, so tokens already on the Early Gem watchlist never lose their slot
+ * to a flood of brand-new pairs.
+ */
+export const WATCH_REASON_PRIORITY: Readonly<Record<string, number>> = { watchlist: 3, analysed: 2, 'new-pair': 1 };
+const PRIORITY_SQL = (col: string): string =>
+  `CASE ${col} ${Object.entries(WATCH_REASON_PRIORITY).map(([r, p]) => `WHEN '${r}' THEN ${p}`).join(' ')} ELSE 0 END`;
+
 export interface ScanCursor {
   readonly block: number;
   /** Swaps are complete from this time on (reset when blocks had to be skipped). */
@@ -86,9 +95,11 @@ export function createSwapStore(db: DatabaseSync): SwapStore {
   migrate(db);
   const upsertWatch = db.prepare(`
     INSERT INTO gem_watch (chain, token, pool, pool_kind, symbol, reason, added_at, expires_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    ON CONFLICT (chain, token) DO UPDATE SET expires_at = MAX(expires_at, excluded.expires_at)`);
+    ON CONFLICT (chain, token) DO UPDATE SET expires_at = MAX(expires_at, excluded.expires_at),
+      reason = CASE WHEN ${PRIORITY_SQL('excluded.reason')} > ${PRIORITY_SQL('reason')} THEN excluded.reason ELSE reason END,
+      symbol = COALESCE(symbol, excluded.symbol)`);
   const getWatch = db.prepare('SELECT * FROM gem_watch WHERE chain = ? AND token = ?');
-  const active = db.prepare('SELECT * FROM gem_watch WHERE chain = ? AND expires_at > ? ORDER BY added_at DESC');
+  const active = db.prepare(`SELECT * FROM gem_watch WHERE chain = ? AND expires_at > ? ORDER BY ${PRIORITY_SQL('reason')} DESC, added_at DESC`);
   const insertSwap = db.prepare(`INSERT OR IGNORE INTO gem_swaps (chain, token, tx_hash, side, wallet, token_amount, block, block_time, nonce, fee_gwei)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`);
   const selectSwaps = db.prepare('SELECT * FROM gem_swaps WHERE chain = ? AND token = ? AND block_time >= ? ORDER BY block_time, tx_hash');

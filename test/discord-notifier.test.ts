@@ -15,9 +15,21 @@ describe('WebhookQueue', () => {
     const stub = fetchStub([() => jsonResponse({ id: MESSAGE_ID })]);
     const queue = new WebhookQueue(WEBHOOK_URL, silentLogger, 10, stub.fn);
     const outcome = await queue.send({ embeds: [] });
-    assert.deepEqual(outcome, { status: 'sent', discordAt: snowflakeToMs(MESSAGE_ID) });
+    assert.deepEqual(outcome, { status: 'sent', discordAt: snowflakeToMs(MESSAGE_ID), messageId: MESSAGE_ID });
     assert.equal(stub.calls[0]?.url, `${WEBHOOK_URL}?wait=true`);
     assert.deepEqual(JSON.parse(stub.calls[0]?.body ?? '{}').allowed_mentions, { parse: [] });
+  });
+
+  it('edits an earlier message with PATCH /messages/{id} and rejects malformed ids', async () => {
+    let method = '';
+    const stub = fetchStub([() => jsonResponse({ id: MESSAGE_ID })]);
+    const spy = (async (input: string | URL | Request, init?: RequestInit) => { method = String(init?.method); return stub.fn(input, init); }) as typeof fetch;
+    const queue = new WebhookQueue(WEBHOOK_URL, silentLogger, 10, spy);
+    const outcome = await queue.edit(MESSAGE_ID, { embeds: [] });
+    assert.equal(outcome.status, 'sent');
+    assert.equal(method, 'PATCH');
+    assert.equal(stub.calls[0]?.url, `${WEBHOOK_URL}/messages/${MESSAGE_ID}`);
+    assert.equal((await queue.edit('../../x', { embeds: [] })).status, 'failed');
   });
 
   it('retries after a 429 using retry_after', async () => {

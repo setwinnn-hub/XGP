@@ -13,6 +13,23 @@ CREATE INDEX IF NOT EXISTS idx_gem_scores_token ON gem_scores (chain, token, at)
 CREATE INDEX IF NOT EXISTS idx_gem_scores_at ON gem_scores (at);
 `;
 
+/** Numbers shown in the Discord alert, captured at scoring time. */
+export interface ScoreSnapshot {
+  readonly uniqueBuyers5m: number | null;
+  readonly uniqueBuyersGrowth5mPct: number | null;
+  readonly buySellRatio15m: number | null;
+  readonly smartMoneyBuyers60m: number;
+  readonly trackedWallets: number;
+  readonly liquidityThb: number | null;
+  readonly exitLiquidityThb: number | null;
+  readonly volume5mThb: number | null;
+  readonly priceChangeH1Pct: number | null;
+  readonly liquidityFlags: readonly string[];
+  readonly whyDetected: readonly string[];
+  readonly mainRisks: readonly string[];
+  readonly chartUrl: string | null;
+}
+
 /** Everything a reader needs to see why a token got its class (kept as history, never overwritten). */
 export interface ScoreRecord {
   readonly chain: string;
@@ -26,6 +43,7 @@ export interface ScoreRecord {
   readonly liquidity: string;
   readonly activity: string;
   readonly accumulation: string;
+  readonly snapshot?: ScoreSnapshot;
 }
 
 export interface ScoreStore {
