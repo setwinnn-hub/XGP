@@ -1,0 +1,137 @@
+import { errorMessage, type Logger } from '../core/logger.ts';
+import { backoffDelay, sleep, snowflakeToMs } from '../core/util.ts';
+
+export interface EmbedField {
+  readonly name: string;
+  readonly value: string;
+  readonly inline?: boolean;
+}
+
+export interface Embed {
+  readonly title: string;
+  readonly description?: string;
+  readonly color: number;
+  readonly fields: readonly EmbedField[];
+  readonly timestamp?: string;
+  readonly footer?: { readonly text: string };
+  readonly url?: string;
+  /** Large picture shown inside the embed (Discord fetches the URL). */
+  readonly image?: { readonly url: string };
+  readonly thumbnail?: { readonly url: string };
+}
+
+export interface DiscordPayload {
+  readonly content?: string;
+  readonly embeds: readonly Embed[];
+}
+
+export type SendOutcome =
+  | { readonly status: 'sent'; readonly discordAt: number | null }
+  | { readonly status: 'failed'; readonly error: string }
+  | { readonly status: 'dropped'; readonly error: string };
+
+const REQUEST_TIMEOUT_MS = 10_000;
+/** Network / 5xx failures before giving up on one message. */
+const MAX_FAILURES = 5;
+/** Rate-limit (429) waits before giving up on one message. */
+const MAX_RATE_LIMIT_WAITS = 10;
+/** Upper bound for any single wait, so a bogus header cannot freeze the queue. */
+const MAX_WAIT_MS = 60_000;
+
+type FetchFn = typeof fetch;
+
+/**
+ * One Discord webhook with its own sequential queue, so Discord's per-webhook rate limit
+ * is respected without blocking other alert categories. The webhook URL is a secret and
+ * is never logged.
+ */
+export class WebhookQueue {
+  private readonly url: string;
+  private readonly logger: Logger;
+  private readonly maxPending: number;
+  private readonly fetchFn: FetchFn;
+  private tail: Promise<unknown> = Promise.resolve();
+  private pending = 0;
+  private pauseUntil = 0;
+
+  constructor(url: string, logger: Logger, maxPending: number, fetchFn: FetchFn = fetch) {
+    this.url = url;
+    this.logger = logger;
+    this.maxPending = maxPending;
+    this.fetchFn = fetchFn;
+  }
+
+  send(payload: DiscordPayload): Promise<SendOutcome> {
+    if (this.pending >= this.maxPending) {
+      return Promise.resolve({ status: 'dropped', error: `queue full (${this.maxPending})` });
+    }
+    this.pending += 1;
+    const result = this.tail.then(() => this.deliver(payload)).finally(() => { this.pending -= 1; });
+    this.tail = result.catch(() => undefined);
+    return result;
+  }
+
+  private async deliver(payload: DiscordPayload): Promise<SendOutcome> {
+    let failures = 0;
+    let rateLimitWaits = 0;
+    let lastError = 'unknown';
+    while (failures < MAX_FAILURES && rateLimitWaits < MAX_RATE_LIMIT_WAITS) {
+      const wait = Math.min(this.pauseUntil - Date.now(), MAX_WAIT_MS);
+      if (wait > 0) await sleep(wait);
+      try {
+        const step = await this.post(payload);
+        if (step.done) return step.outcome;
+        lastError = step.error;
+        if (step.retryAfterMs !== undefined) {
+          rateLimitWaits += 1;
+          await sleep(Math.min(step.retryAfterMs, MAX_WAIT_MS));
+        } else {
+          await sleep(backoffDelay(failures, 1_000, 15_000));
+          failures += 1;
+        }
+      } catch (error: unknown) {
+        // A timeout here may mean Discord received the message; a retry can then duplicate it.
+        lastError = errorMessage(error);
+        await sleep(backoffDelay(failures, 1_000, 15_000));
+        failures += 1;
+      }
+    }
+    return { status: 'failed', error: lastError };
+  }
+
+  private async post(payload: DiscordPayload): Promise<
+    | { readonly done: true; readonly outcome: SendOutcome }
+    | { readonly done: false; readonly error: string; readonly retryAfterMs?: number }
+  > {
+    const body = JSON.stringify({ ...payload, allowed_mentions: { parse: [] } });
+    const response = await this.fetchFn(`${this.url}?wait=true`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body,
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+    this.applyRateLimitHeaders(response.headers);
+    if (response.ok) {
+      const json = (await response.json().catch(() => null)) as { id?: unknown } | null;
+      const discordAt = typeof json?.id === 'string' ? snowflakeToMs(json.id) : null;
+      return { done: true, outcome: { status: 'sent', discordAt } };
+    }
+    if (response.status === 429) {
+      const json = (await response.json().catch(() => null)) as { retry_after?: unknown } | null;
+      const seconds = typeof json?.retry_after === 'number' ? json.retry_after : 2;
+      this.logger.warn('discord rate limited', { retryAfterSec: seconds });
+      return { done: false, error: 'HTTP 429', retryAfterMs: Math.ceil(seconds * 1000) };
+    }
+    if (response.status >= 500) return { done: false, error: `HTTP ${response.status}` };
+    const text = (await response.text().catch(() => '')).slice(0, 200);
+    return { done: true, outcome: { status: 'failed', error: `HTTP ${response.status} ${text}` } };
+  }
+
+  private applyRateLimitHeaders(headers: Headers): void {
+    const remaining = headers.get('x-ratelimit-remaining');
+    const resetAfter = Number(headers.get('x-ratelimit-reset-after'));
+    if (remaining === '0' && Number.isFinite(resetAfter) && resetAfter > 0) {
+      this.pauseUntil = Date.now() + Math.min(Math.ceil(resetAfter * 1000), MAX_WAIT_MS);
+    }
+  }
+}

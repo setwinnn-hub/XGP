@@ -1,0 +1,34 @@
+{
+  "name": "meme-coin-radar",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Real-time multi-chain meme coin detection and Discord alerts (read-only, no trading)",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node --env-file-if-exists=.env src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:coverage": "node --test --experimental-test-coverage \"test/**/*.test.ts\"",
+    "report": "node --env-file-if-exists=.env scripts/latency-report.ts",
+    "verify:evm": "node --env-file-if-exists=.env scripts/verify-evm-factories.ts",
+    "check:evm": "node --env-file-if-exists=.env scripts/check-evm-completeness.ts",
+    "wallet": "node --env-file-if-exists=.env scripts/wallet.ts",
+    "trades": "node --env-file-if-exists=.env scripts/trade-report.ts",
+    "viral:post": "node --env-file-if-exists=.env scripts/post-viral-report.ts",
+    "news:preview": "node --env-file-if-exists=.env scripts/news-preview.ts",
+    "analyse": "node --env-file-if-exists=.env scripts/analyse-token.ts",
+    "smartmoney": "node --env-file-if-exists=.env scripts/smart-money.ts",
+    "find:wallets": "node --env-file-if-exists=.env scripts/find-active-wallets.ts"
+  },
+  "dependencies": {
+    "fast-xml-parser": "^5.12.1",
+    "viem": "^2.58.6"
+  },
+  "devDependencies": {
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3"
+  }
+}
