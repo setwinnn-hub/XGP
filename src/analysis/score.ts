@@ -37,6 +37,8 @@ export function usd(n: number): string {
 
 /** Below this share of the reported liquidity, the quote side is too thin to be a real pool. */
 const MIN_QUOTE_SHARE = 0.1;
+/** The market-cap-vs-liquidity manipulation check applies only below this pool size. */
+const THIN_POOL_USD = 250_000;
 
 /** Liquidity a seller can exit into when the quote side is known, else DexScreener's figure. */
 function realLiquidityUsd(m: MarketSnapshot): number | null {
@@ -105,7 +107,9 @@ function marketRisks(m: MarketSnapshot): RiskFinding[] {
   // The manipulation check uses market cap, or FDV when no market cap is published (labelled as such).
   const cap = m.marketCapUsd ?? m.fdvUsd;
   const capLabel = m.marketCapUsd !== null ? 'Market cap' : 'FDV';
-  if (!onCurve && liq !== null && cap !== null && cap > 0 && liq / cap < 0.02) {
+  // Only thin pools: an established large cap (PEPE, SHIB) trades mostly elsewhere and its
+  // biggest DEX pool is naturally tiny next to its cap.
+  if (!onCurve && liq !== null && liq < THIN_POOL_USD && cap !== null && cap > 0 && liq / cap < 0.02) {
     out.push({ level: 'HIGH', text: `${capLabel} ${usd(cap)} สูงเกินสภาพคล่อง ${usd(liq)} มาก (ราคาอาจถูกปั่น)` });
   }
   const h1 = m.priceChangePct.h1;

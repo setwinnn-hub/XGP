@@ -27,6 +27,7 @@ export interface MarketSnapshot {
 }
 
 const DEXSCREENER = 'https://api.dexscreener.com/tokens/v1';
+const DEXSCREENER_PAIRS = 'https://api.dexscreener.com/token-pairs/v1';
 const TIMEOUT_MS = 8_000;
 
 type Raw = Record<string, unknown>;
@@ -81,19 +82,28 @@ export function exitLiquidityUsd(m: MarketSnapshot): number | null {
   return Math.min(liquidityUsd, 2 * liquidityQuote * (priceUsd / priceNative));
 }
 
-/** Picks the token's most liquid pair (bonding-curve pairs have no liquidity; then highest volume). */
+/**
+ * Picks the token's most liquid pair by real (quote-side) liquidity, so a fake pool with an
+ * inflated reported number cannot stand in for the real market; then highest volume.
+ * Bonding-curve pairs have no liquidity.
+ */
 export function pickBestPair(pairs: unknown, token: string): MarketSnapshot | null {
   if (!Array.isArray(pairs)) return null;
-  const mine = (pairs as Raw[]).filter((p) => String(obj(p.baseToken).address ?? '').toLowerCase() === token.toLowerCase());
+  const mine = (pairs as Raw[])
+    .filter((p) => String(obj(p.baseToken).address ?? '').toLowerCase() === token.toLowerCase())
+    .map(toSnapshot);
   if (mine.length === 0) return null;
-  const score = (p: Raw): number => (num(obj(p.liquidity).usd) ?? 0) * 1e6 + (num(obj(p.volume).h24) ?? 0);
-  const best = mine.reduce((a, b) => (score(b) > score(a) ? b : a));
-  return toSnapshot(best);
+  const score = (s: MarketSnapshot): number => (exitLiquidityUsd(s) ?? s.liquidityUsd ?? 0) * 1e6 + s.volumeUsd.h24;
+  return mine.reduce((a, b) => (score(b) > score(a) ? b : a));
 }
 
-/** Current market data for a token from DexScreener's free API (~300 req/min). */
+/**
+ * Current market data for a token from DexScreener's free API (~300 req/min). Uses token-pairs,
+ * which lists the token's pools (up to 30): tokens/v1 returns one pair per token, often not
+ * the main pool (TRUMP: a $118k Orca pool instead of the $3.8M Meteora pool).
+ */
 export async function fetchMarket(chain: ChainId, token: string, fetchFn: typeof fetch = fetch): Promise<MarketSnapshot | null> {
-  const response = await fetchFn(`${DEXSCREENER}/${encodeURIComponent(chain)}/${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
+  const response = await fetchFn(`${DEXSCREENER_PAIRS}/${encodeURIComponent(chain)}/${encodeURIComponent(token)}`, { signal: AbortSignal.timeout(TIMEOUT_MS) });
   if (!response.ok) throw new Error(`DexScreener HTTP ${response.status}`);
   return pickBestPair(await response.json(), token);
 }

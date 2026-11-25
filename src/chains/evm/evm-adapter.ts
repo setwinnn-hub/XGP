@@ -17,6 +17,8 @@ const BLOCK_TIME_CACHE = 256;
 /** Largest catch-up range per eth_getLogs call after an outage. */
 const MAX_SCAN_BLOCKS = 500n;
 const INDEX_LAG_RETRY_MS = 1_500;
+/** A failed scan is retried after this long rather than on the next block head. */
+const SCAN_RETRY_MS = 2_000;
 
 export interface EvmAdapterDeps extends AdapterDeps {
   readonly chain: EvmChainConfig;
@@ -89,6 +91,7 @@ export function createEvmAdapter(deps: EvmAdapterDeps): Adapter {
   let lastProcessed: bigint | null = null;
   let latestHead: bigint | null = null;
   let scanning = false;
+  let retryTimer: NodeJS.Timeout | null = null;
   const blockTimes = new Map<bigint, number>();
 
   const resolveBlockTime = async (c: Client, key: string, blockNumber: bigint): Promise<void> => {
@@ -156,11 +159,21 @@ export function createEvmAdapter(deps: EvmAdapterDeps): Adapter {
         }
       }
     } catch (error: unknown) {
-      // lastProcessed is unchanged, so the next head retries the same range.
-      logger.warn('getLogs failed', { error: errorMessage(error) });
+      // lastProcessed is unchanged: retry the same range shortly instead of waiting a whole
+      // block (12 s on Ethereum) for the next head; that wait was the main alert delay.
+      logger.warn('getLogs failed, retrying', { error: errorMessage(error), retryMs: SCAN_RETRY_MS });
+      scheduleRetry(c);
     } finally {
       scanning = false;
     }
+  };
+
+  const scheduleRetry = (c: Client): void => {
+    if (retryTimer) return;
+    retryTimer = setTimeout(() => {
+      retryTimer = null;
+      if (client === c && !stopped) void scan(c);
+    }, SCAN_RETRY_MS);
   };
 
   const connect = (): void => {
@@ -220,6 +233,8 @@ export function createEvmAdapter(deps: EvmAdapterDeps): Adapter {
     stop() {
       stopped = true;
       if (watchdog) clearInterval(watchdog);
+      if (retryTimer) clearTimeout(retryTimer);
+      retryTimer = null;
       void disconnect();
     },
   };

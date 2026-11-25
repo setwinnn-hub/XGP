@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { exitLiquidityUsd, type MarketSnapshot } from '../src/analysis/market.ts';
+import { exitLiquidityUsd, fetchMarket, pickBestPair, type MarketSnapshot } from '../src/analysis/market.ts';
 import { scoreToken } from '../src/analysis/score.ts';
 import type { SecurityReport } from '../src/analysis/security.ts';
 
@@ -41,6 +41,54 @@ describe('exitLiquidityUsd', () => {
     assert.equal(exitLiquidityUsd(pool({})), null);
     assert.equal(exitLiquidityUsd(pool({ priceNative: 0.5 })), null);
     assert.equal(exitLiquidityUsd(pool({ liquidityUsd: null, priceNative: 1, liquidityQuote: 1 })), null);
+  });
+});
+
+describe('pickBestPair with a fake pool next to the real one', () => {
+  const pair = (address: string, liqUsd: number, quote: number, priceNative: number, vol24: number) => ({
+    url: `https://dexscreener.com/solana/${address}`, pairAddress: address, dexId: 'raydium',
+    baseToken: { address: 'TokenMint' }, priceUsd: '0.0187', priceNative: String(priceNative),
+    liquidity: { usd: liqUsd, base: 1, quote }, volume: { h24: vol24 },
+  });
+
+  it('picks the pool with the most real (quote-side) liquidity, not the biggest reported number', () => {
+    const fake = pair('FakePool', 317_701_563, 22.25, 0.0187, 0);
+    const real = pair('RealPool', 754_102, 5_345.5, 0.0187 / SOL_USD, 2_018_551);
+    assert.equal(pickBestPair([fake, real], 'TokenMint')?.pairAddress, 'RealPool');
+  });
+
+  it('falls back to reported liquidity when the quote side is unknown', () => {
+    const a = { ...pair('A', 10_000, 0, 1, 0), liquidity: { usd: 10_000 } };
+    const b = { ...pair('B', 50_000, 0, 1, 0), liquidity: { usd: 50_000 } };
+    assert.equal(pickBestPair([a, b], 'TokenMint')?.pairAddress, 'B');
+  });
+});
+
+describe('fetchMarket', () => {
+  it('reads every pool of the token (token-pairs), not the single pair tokens/v1 returns', async () => {
+    const urls: string[] = [];
+    const body = [
+      { pairAddress: 'Minor', dexId: 'orca', baseToken: { address: 'TRUMP' }, priceUsd: '0.87', priceNative: '0.0123', liquidity: { usd: 118_000, quote: 375 }, volume: { h24: 1 } },
+      { pairAddress: 'Main', dexId: 'meteora', baseToken: { address: 'TRUMP' }, priceUsd: '0.87', priceNative: '0.87', liquidity: { usd: 3_801_530, quote: 1_900_000 }, volume: { h24: 1 } },
+    ];
+    const fakeFetch = (async (url: string) => { urls.push(url); return new Response(JSON.stringify(body)); }) as typeof fetch;
+    const m = await fetchMarket('solana', 'TRUMP', fakeFetch);
+    assert.equal(urls[0], 'https://api.dexscreener.com/token-pairs/v1/solana/TRUMP');
+    assert.equal(m?.pairAddress, 'Main');
+  });
+});
+
+describe('scoreToken: market cap far above liquidity', () => {
+  it('does not call an established large cap a fake just because its DEX pool is small next to its cap', () => {
+    const pepeLike = pool({ liquidityUsd: 22_980_000, marketCapUsd: 1_600_000_000, volumeUsd: { m5: 50_000, h1: 900_000, h24: 20_000_000 }, txnsH1: { buys: 400, sells: 380 } });
+    const score = scoreToken(pepeLike, SAFE, { smartMoneyBuyers: 0, newsMentions: 0, now: NOW });
+    assert.ok(!score.risks.some((r) => r.includes('สูงเกินสภาพคล่อง')), score.risks.join('\n'));
+  });
+
+  it('still flags a thin pool carrying a huge market cap', () => {
+    const thin = pool({ liquidityUsd: 90_000, marketCapUsd: 20_000_000 });
+    const score = scoreToken(thin, SAFE, { smartMoneyBuyers: 0, newsMentions: 0, now: NOW });
+    assert.ok(score.risks.some((r) => r.includes('สูงเกินสภาพคล่อง')), score.risks.join('\n'));
   });
 });
 
