@@ -56,6 +56,8 @@ export interface AppConfig {
   readonly pumpPortalApiKey: string | null;
   readonly pumpfun: PumpfunConfig;
   readonly evmChains: readonly EvmChainConfig[];
+  /** Chains whose watched tokens get buys/sells collected (Early Gem). Base is off by default: its free RPC is too tight. */
+  readonly gemSwapChains: readonly string[];
   /** Alert only on new EVM pairs where one side is a known quote token (WETH, WBNB, USDC...). */
   readonly evmQuotePairsOnly: boolean;
   readonly solanaRpcUrl: string;
@@ -184,6 +186,7 @@ export function loadConfig(env: Env = process.env): AppConfig {
       alertMigrations: readBool(env, 'PUMPFUN_MIGRATION_ALERTS', true),
     },
     evmChains: readEvmChains(env),
+    gemSwapChains: readList(env, 'GEM_SWAP_CHAINS', ['ethereum', 'bsc']),
     evmQuotePairsOnly: readBool(env, 'EVM_QUOTE_PAIRS_ONLY', true),
     solanaRpcUrl,
     latencySampleRate: readNumber(env, 'LATENCY_SAMPLE_RATE', 0.25, 0, 1),

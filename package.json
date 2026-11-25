@@ -22,6 +22,7 @@
     "analyse": "node --env-file-if-exists=.env scripts/analyse-token.ts",
     "smartmoney": "node --env-file-if-exists=.env scripts/smart-money.ts",
     "mcap": "node --env-file-if-exists=.env scripts/mcap.ts",
+    "buyers": "node --env-file-if-exists=.env scripts/buyers.ts",
     "find:wallets": "node --env-file-if-exists=.env scripts/find-active-wallets.ts"
   },
   "dependencies": {

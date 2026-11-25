@@ -9,7 +9,8 @@ import { createEvmWalletScanner } from './chains/evm/wallet-scanner.ts';
 import { createSolanaChainTimeResolver } from './chains/solana/chain-time.ts';
 import { createPumpPortalAdapter } from './chains/solana/pumpportal-adapter.ts';
 import { createSolanaWalletWatcher } from './chains/solana/wallet-watcher.ts';
-import { loadConfig, wsUrlFor, type AppConfig } from './config.ts';
+import { createPublicClient, http, type PublicClient } from 'viem';
+import { httpUrlFor, loadConfig, wsUrlFor, type AppConfig } from './config.ts';
 import { createPriceBook, type PriceBook } from './enrich/prices.ts';
 import { createNameLookup } from './enrich/token-names.ts';
 import { createNotifier, type Notifier } from './notify/notifier.ts';
@@ -19,6 +20,9 @@ import { createCoinGeckoTrendingAdapter } from './news/coingecko-trending.ts';
 import { createNewsAdapter } from './news/news-adapter.ts';
 import { openDatabase } from './storage/db.ts';
 import { createEventRepository, type EventRepository } from './storage/event-repo.ts';
+import { createSwapCollector } from './gem/swap-collector.ts';
+import { createSwapStore, type SwapStore } from './gem/swap-store.ts';
+import { watchFor } from './gem/watch-policy.ts';
 import { explorerUrls, toTradeEvent, type WalletTrade } from './trades/trade-event.ts';
 import { createTradeSink } from './trades/trade-sink.ts';
 import { WalletRegistry } from './wallets/wallet-registry.ts';
@@ -50,10 +54,11 @@ interface Wiring {
   readonly ingest: Ingest;
   readonly registry: WalletRegistry;
   readonly prices: PriceBook;
+  readonly swapStore: SwapStore;
 }
 
 function buildAdapters(w: Wiring): Adapter[] {
-  const { config, logger, health, repo, ingest, registry } = w;
+  const { config, logger, health, repo, ingest, registry, swapStore } = w;
   const emit = (trade: WalletTrade, chainMs: number | null): void => {
     const event = toTradeEvent(trade, explorerUrls(trade.chain, findEvmChain(trade.chain)?.explorerTxUrl ?? null));
     if (ingest(tradeHealthName(trade), event) && chainMs !== null) repo.setChainTime(event.key, chainMs);
@@ -63,6 +68,12 @@ function buildAdapters(w: Wiring): Adapter[] {
   const evm = config.evmChains.map((chain) => createEvmAdapter({
     logger, health, ingest, chain, wsUrl: wsUrlFor(chain), onChainTime,
     walletScanner: createEvmWalletScanner({ chain, logger, registry, sink }),
+    swapCollector: config.gemSwapChains.includes(chain.id)
+      ? createSwapCollector({
+          chain, store: swapStore, logger,
+          rpc: createPublicClient({ transport: http(httpUrlFor(chain), { timeout: 15_000 }) }) as PublicClient,
+        })
+      : undefined,
   }));
   const solanaWallets = config.solanaWalletTracking
     ? [createSolanaWalletWatcher({ wsUrl: config.solanaWsUrl, rpcUrl: config.solanaRpcUrl, logger, health, registry, sink })]
@@ -110,13 +121,20 @@ function main(): void {
   const notifier = createNotifier({ config, repo, logger });
   const registry = new WalletRegistry(createWalletRepository(db), logger);
   const prices = createPriceBook(logger);
+  const swapStore = createSwapStore(db);
 
   const resolveSolanaTime = createSolanaChainTimeResolver({
     rpcUrl: config.solanaRpcUrl, logger, onResolved: (key, ms) => repo.setChainTime(key, ms),
   });
   bus.subscribe('notifier', (event) => notifier.handle(event));
   const analysis = config.analysis.enabled
-    ? new AnalysisEngine({ config: config.analysis, repo, ingest, logger })
+    ? new AnalysisEngine({
+        config: config.analysis, repo, ingest, logger,
+        onAnalysed: (ref, result) => {
+          const entry = config.gemSwapChains.includes(ref.chain) ? watchFor(ref, result.market, Date.now()) : null;
+          if (entry && swapStore.watch(entry)) logger.info('gem watch started', { chain: entry.chain, token: entry.token, poolKind: entry.poolKind });
+        },
+      })
     : null;
   bus.subscribe('analysis', (event) => {
     const ref = analysis ? tokenToAnalyse(event, decideAlert(event, config).alert) : null;
@@ -130,7 +148,7 @@ function main(): void {
   prices.start();
   registry.start(WALLET_REFRESH_MS);
   analysis?.start();
-  const adapters = buildAdapters({ config, logger, health, repo, ingest, registry, prices });
+  const adapters = buildAdapters({ config, logger, health, repo, ingest, registry, prices, swapStore });
   const sweep = wireHealth(health, notifier, logger);
   const stats = setInterval(() => logStats(health, registry, logger), STATS_INTERVAL_MS);
   for (const adapter of adapters) adapter.start();

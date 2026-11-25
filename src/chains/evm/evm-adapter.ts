@@ -8,6 +8,7 @@ import type { DexFactory, EvmChainConfig } from './chains.ts';
 import { factoryEventFor } from './factory-events.ts';
 import { normalizePairLog, pairSides, type TokenMeta } from './normalize.ts';
 import type { EvmWalletScanner } from './wallet-scanner.ts';
+import type { SwapCollector } from '../../gem/swap-collector.ts';
 
 const MULTICALL3: Address = '0xcA11bde05977b3631167028862bE2a173976CA11';
 const META_TIMEOUT_MS = 3_000;
@@ -23,6 +24,8 @@ export interface EvmAdapterDeps extends AdapterDeps {
   readonly onChainTime: (key: string, chainMs: number) => void;
   /** Followed-wallet trades share this connection's block heads. */
   readonly walletScanner?: EvmWalletScanner;
+  /** Buys/sells of watched tokens (Early Gem) share the same heads. */
+  readonly swapCollector?: SwapCollector;
 }
 
 type Client = ReturnType<typeof createClient>;
@@ -171,6 +174,7 @@ export function createEvmAdapter(deps: EvmAdapterDeps): Adapter {
         if (latestHead === null || head > latestHead) latestHead = head;
         void scan(c);
         deps.walletScanner?.onHead(c as unknown as PublicClient, head);
+        deps.swapCollector?.onHead(c as unknown as PublicClient, head);
       },
       onError: (error) => logger.warn('newHeads subscription error', { error: errorMessage(error) }),
     });

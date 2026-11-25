@@ -31,6 +31,8 @@ export interface AnalysisDeps {
   readonly fetchMarket?: typeof fetchMarket;
   readonly fetchSecurity?: typeof fetchSecurity;
   readonly now?: () => number;
+  /** Called after every analysis (e.g. to start collecting the token's swaps). */
+  readonly onAnalysed?: (ref: TokenRef, result: AnalysisResult) => void;
 }
 
 export interface TokenRef {
@@ -198,6 +200,11 @@ export class AnalysisEngine {
 
   private async run(job: Job): Promise<void> {
     const result = await this.analyse(job);
+    try {
+      this.deps.onAnalysed?.(job, result);
+    } catch (error: unknown) {
+      this.logger.warn('onAnalysed hook failed', { token: job.token, error: errorMessage(error) });
+    }
     const at = this.now();
     const id = tokenId(job);
     this.deps.ingest(SOURCE, analysisEvent(job, result, `analysis:${id}:${job.stage}`, 'none', at));
