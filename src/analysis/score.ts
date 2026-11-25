@@ -1,4 +1,4 @@
-import type { MarketSnapshot } from './market.ts';
+import { exitLiquidityUsd, type MarketSnapshot } from './market.ts';
 import { isVerified, type SecurityReport } from './security.ts';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -35,6 +35,14 @@ export function usd(n: number): string {
   return `$${n.toFixed(0)}`;
 }
 
+/** Below this share of the reported liquidity, the quote side is too thin to be a real pool. */
+const MIN_QUOTE_SHARE = 0.1;
+
+/** Liquidity a seller can exit into when the quote side is known, else DexScreener's figure. */
+function realLiquidityUsd(m: MarketSnapshot): number | null {
+  return exitLiquidityUsd(m) ?? m.liquidityUsd;
+}
+
 function marketFindings(m: MarketSnapshot): Finding[] {
   const out: Finding[] = [];
   const { buys, sells } = m.txnsH1;
@@ -44,7 +52,8 @@ function marketFindings(m: MarketSnapshot): Finding[] {
   if (m.volumeUsd.h1 > 0 && m.volumeUsd.m5 * 12 >= m.volumeUsd.h1 * 2) out.push({ points: 10, text: 'Volume 5 นาทีล่าสุดเร่งขึ้นแรงเมื่อเทียบกับค่าเฉลี่ยชั่วโมง' });
   if (total >= 30 && buys / total >= 0.6) out.push({ points: 15, text: `แรงซื้อมากกว่าแรงขาย (${buys} ซื้อ / ${sells} ขาย ใน 1 ชม.)` });
   if (total >= 100) out.push({ points: 5, text: `มีการซื้อขายคึกคัก ${total} ครั้ง/ชม.` });
-  if ((m.liquidityUsd ?? 0) >= 50_000) out.push({ points: 10, text: `สภาพคล่องดี ${usd(m.liquidityUsd ?? 0)}` });
+  const liq = realLiquidityUsd(m);
+  if ((liq ?? 0) >= 50_000) out.push({ points: 10, text: `สภาพคล่องดี ${usd(liq ?? 0)}` });
   const h1 = m.priceChangePct.h1;
   if (h1 !== null && h1 >= 20 && h1 <= 1_000) out.push({ points: 10, text: `ราคา 1 ชม. +${h1.toFixed(0)}%` });
   if (m.socials + m.websites >= 2) out.push({ points: 5, text: 'มีเว็บไซต์/โซเชียลของโปรเจกต์' });
@@ -85,8 +94,13 @@ function securityRisks(s: SecurityReport): RiskFinding[] {
 
 function marketRisks(m: MarketSnapshot): RiskFinding[] {
   const out: RiskFinding[] = [];
-  const liq = m.liquidityUsd;
+  const reported = m.liquidityUsd;
+  const exit = exitLiquidityUsd(m);
+  const liq = exit ?? reported;
   const onCurve = m.dexId === 'pumpfun';
+  if (!onCurve && reported !== null && reported > 0 && exit !== null && exit / reported < MIN_QUOTE_SHARE) {
+    out.push({ level: 'HIGH', text: `DexScreener รายงานสภาพคล่อง ${usd(reported)} แต่ฝั่งเงินจริงใน pool มีแค่ ${usd(exit / 2)} (อาจเป็น pool ปลอม/ราคาตั้งเอง ขายออกได้น้อยมาก)` });
+  }
   if (!onCurve && liq !== null && liq < 5_000) out.push({ level: 'HIGH', text: `สภาพคล่องต่ำมาก ${usd(liq)}` });
   // The manipulation check uses market cap, or FDV when no market cap is published (labelled as such).
   const cap = m.marketCapUsd ?? m.fdvUsd;

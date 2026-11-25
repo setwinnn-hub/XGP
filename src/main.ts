@@ -16,6 +16,7 @@ import { createNameLookup } from './enrich/token-names.ts';
 import { createNotifier, type Notifier } from './notify/notifier.ts';
 import { decideAlert } from './notify/filters.ts';
 import { AnalysisEngine, tokenToAnalyse } from './analysis/analysis-engine.ts';
+import { fetchSolanaMint } from './analysis/solana-mint.ts';
 import { createCoinGeckoTrendingAdapter } from './news/coingecko-trending.ts';
 import { createNewsAdapter } from './news/news-adapter.ts';
 import { openDatabase } from './storage/db.ts';
@@ -148,7 +149,7 @@ function main(): void {
     smartWallets: (chain) => new Set(registry.wallets(chain).keys()),
     quality: {
       store: createQualityStore(db),
-      security: createSecurityCache({ logger }),
+      security: createSecurityCache({ logger, fetchSolanaMint: (mint) => fetchSolanaMint(config.solanaRpcUrl, mint) }),
       settings: () => gemSettings.get(),
       thbPerUsd: () => prices.fxRate()?.thbPerUsd ?? null,
       reserves: async (chain, requests) => {
@@ -173,6 +174,7 @@ function main(): void {
   const analysis = config.analysis.enabled
     ? new AnalysisEngine({
         config: config.analysis, repo, ingest, logger,
+        fetchSolanaMint: (mint) => fetchSolanaMint(config.solanaRpcUrl, mint),
         onAnalysed: (ref, result) => {
           const entry = config.gemSwapChains.includes(ref.chain) ? watchFor(ref, result.market, Date.now()) : null;
           if (entry && swapStore.watch(entry)) logger.info('gem watch started', { chain: entry.chain, token: entry.token, poolKind: entry.poolKind });

@@ -5,6 +5,7 @@
 import { createPublicClient, http, type PublicClient } from 'viem';
 import { fetchMarket } from '../src/analysis/market.ts';
 import { fetchSecurity } from '../src/analysis/security.ts';
+import { fetchSolanaMint, mergeSolanaMint } from '../src/analysis/solana-mint.ts';
 import { findEvmChain } from '../src/chains/evm/chains.ts';
 import { httpUrlFor, loadConfig } from '../src/config.ts';
 import { errorMessage } from '../src/core/logger.ts';
@@ -28,18 +29,23 @@ const ICON = { PASS: '✅ ผ่าน', WARN: '⚠️  ระวัง', FAIL: 
 async function main(): Promise<void> {
   const [chain, token, tradeArg] = process.argv.slice(2);
   if (!chain || !token || !isChainId(chain) || chain === 'offchain') throw new Error('Usage: npm run tokencheck -- <ethereum|base|bsc|solana> <token> [tradeThb]');
-  const db = openDatabase(loadConfig().dbPath);
+  const config = loadConfig();
+  const db = openDatabase(config.dbPath);
   const saved = createSettingsRepository(db).get();
   const trade = tradeArg ? Number(tradeArg) : saved.testTradeThb;
   if (!Number.isFinite(trade) || trade <= 0) throw new Error('tradeThb must be a positive number');
   const settings = { ...saved, testTradeThb: trade };
 
-  const [market, goplus, honeypot, fx] = await Promise.all([
+  const [market, reported, mint, honeypot, fx] = await Promise.all([
     fetchMarket(chain, token).catch(() => null),
     fetchSecurity(chain, token).catch((e: unknown) => { out(`GoPlus error: ${errorMessage(e)}`); return null; }),
+    chain === 'solana'
+      ? fetchSolanaMint(config.solanaRpcUrl, token).catch((e: unknown) => { out(`Solana RPC error: ${errorMessage(e)}`); return null; })
+      : Promise.resolve(null),
     fetchHoneypot(chain, token).catch((e: unknown) => { out(`honeypot.is error: ${errorMessage(e)}`); return null; }),
     fetchFxRate().catch(() => null),
   ]);
+  const goplus = mergeSolanaMint(reported, mint);
   const watch = market ? watchFor({ chain, token, symbol: null, name: null }, { ...market, marketCapUsd: null, fdvUsd: null }, Date.now()) : null;
   const evm = findEvmChain(chain);
   let reserves: PairReserves | null = null;
@@ -75,7 +81,7 @@ async function main(): Promise<void> {
   if (liquidity.flags.length > 0) out(`  flags: ${liquidity.flags.join(', ')}`);
 
   out(`\nSECURITY  ${security.level}${security.suppressGemAlert ? ' (Gem alert suppressed)' : ''}`);
-  out(`  sources: GoPlus ${goplus ? 'answered' : 'no data'} | honeypot.is ${honeypot?.status ?? 'not supported'}`);
+  out(`  sources: GoPlus ${reported ? 'answered' : 'no data'}${chain === 'solana' ? ` | Solana RPC ${mint ? 'answered' : 'no data'}` : ''} | honeypot.is ${honeypot?.status ?? 'not supported'}`);
   for (const c of security.checks) out(`  ${ICON[c.status]} | ${c.label}${c.detail ? ` — ${c.detail}` : ''}${c.sources.length ? ` [${c.sources.join(', ')}]` : ''}`);
   for (const r of security.reasons) out(`  > ${r}`);
 }

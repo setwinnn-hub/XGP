@@ -1,4 +1,5 @@
 import { fetchSecurity, type SecurityReport } from '../analysis/security.ts';
+import { mergeSolanaMint, type SolanaMintFacts } from '../analysis/solana-mint.ts';
 import type { ChainId } from '../core/types.ts';
 import { errorMessage, type Logger } from '../core/logger.ts';
 import { fetchHoneypot, type HoneypotResult } from './honeypot.ts';
@@ -18,6 +19,7 @@ export interface SecurityCacheDeps {
   readonly logger: Logger;
   readonly fetchSecurity?: typeof fetchSecurity;
   readonly fetchHoneypot?: typeof fetchHoneypot;
+  readonly fetchSolanaMint?: (mint: string) => Promise<SolanaMintFacts | null>;
   readonly now?: () => number;
 }
 
@@ -48,13 +50,25 @@ export function createSecurityCache(deps: SecurityCacheDeps): SecurityCache {
     }
   };
 
+  /** On-chain mint authorities and fees; overrides GoPlus and works while GoPlus is paused. */
+  const solanaMint = async (chain: ChainId, token: string): Promise<SolanaMintFacts | null> => {
+    if (chain !== 'solana' || !deps.fetchSolanaMint) return null;
+    try {
+      return await deps.fetchSolanaMint(token);
+    } catch (error: unknown) {
+      logger.debug('solana mint lookup failed', { error: errorMessage(error) });
+      return null;
+    }
+  };
+
   return {
     async get(chain, token, allowFetch) {
       const key = `${chain}:${chain === 'solana' ? token : token.toLowerCase()}`;
       const cached = cache.get(key) ?? { goplus: null, honeypot: null, at: null };
       const stale = cached.at === null || now() - cached.at >= TTL_MS;
       if (!stale || !allowFetch) return { ...cached, fetched: false };
-      const goplus = await guarded('goplus', () => (deps.fetchSecurity ?? fetchSecurity)(chain, token), cached.goplus);
+      const reported = await guarded('goplus', () => (deps.fetchSecurity ?? fetchSecurity)(chain, token), cached.goplus);
+      const goplus = mergeSolanaMint(reported, await solanaMint(chain, token));
       const honeypot = await guarded('honeypot', () => (deps.fetchHoneypot ?? fetchHoneypot)(chain, token), cached.honeypot);
       const fresh: SecuritySources = { goplus, honeypot, at: now() };
       cache = new Map([...cache].filter(([, v]) => v.at !== null && now() - v.at < 4 * TTL_MS)).set(key, fresh);

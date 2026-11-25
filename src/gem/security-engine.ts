@@ -117,12 +117,17 @@ function evmChecks(input: SecurityInput, conflicts: string[]): SecurityCheck[] {
 }
 
 function solanaChecks(g: SecurityReport | null): SecurityCheck[] {
+  const source = g?.authoritySource ?? 'GoPlus';
+  const sellTax = g?.sellTaxPct === null || g?.sellTaxPct === undefined
+    ? make('sell_tax', 'ภาษีขาย', 'high', 'UNKNOWN', [], 'Token-2022 transfer fee ยังไม่ได้อ่าน')
+    : taxCheck('sell_tax', 'ภาษีขาย (Token-2022 transfer fee)', [{ source, pct: g.sellTaxPct }], []);
   return [
     make('honeypot', 'Honeypot (ซื้อแล้วขายไม่ได้)', 'critical', 'UNKNOWN', [], 'ยังไม่มีแหล่งจำลองการซื้อขายฟรีสำหรับ Solana'),
-    make('sell_tax', 'ภาษีขาย', 'high', 'UNKNOWN', [], 'Token-2022 transfer fee ยังไม่ได้อ่าน'),
-    flagCheck('mintable', 'Mint authority ยังอยู่', 'high', g?.mintable, 'GoPlus'),
-    flagCheck('freezable', 'Freeze authority ยังอยู่', 'critical', g?.freezable, 'GoPlus'),
-    flagCheck('owner_change_balance', 'แก้ยอดเงินได้ (balance mutable)', 'critical', g?.ownerCanChangeBalance, 'GoPlus'),
+    sellTax,
+    flagCheck('mintable', 'Mint authority ยังอยู่', 'high', g?.mintable, source),
+    flagCheck('freezable', 'Freeze authority ยังอยู่', 'critical', g?.freezable, source),
+    flagCheck('owner_change_balance', 'แก้ยอดเงินได้ (balance mutable / permanent delegate)', 'critical', g?.ownerCanChangeBalance, source),
+    flagCheck('pausable', 'Transfer hook บล็อกการโอนได้', 'high', g?.transferPausable, source),
   ];
 }
 

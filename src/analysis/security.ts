@@ -16,6 +16,8 @@ export interface SecurityReport {
   /** Share of supply held by the 10 largest holders, excluding pools, burn and lock addresses (0–100). */
   readonly top10HoldersPct: number | null;
   readonly creatorPct: number | null;
+  /** Who answered the Solana authority flags (default GoPlus; 'Solana RPC' when read on-chain). */
+  readonly authoritySource?: string;
   /** Extra EVM facts used by the Early Gem security engine (optional: older callers ignore them). */
   readonly extra?: SecurityExtra;
 }

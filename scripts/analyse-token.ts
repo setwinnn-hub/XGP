@@ -4,6 +4,7 @@
  *   chain: solana | ethereum | base | bsc
  */
 import { AnalysisEngine } from '../src/analysis/analysis-engine.ts';
+import { fetchSolanaMint } from '../src/analysis/solana-mint.ts';
 import { loadConfig } from '../src/config.ts';
 import { silentLogger } from '../src/core/logger.ts';
 import { openDatabase } from '../src/storage/db.ts';
@@ -15,7 +16,10 @@ async function main(): Promise<void> {
   if (!chain || !token || !isChainId(chain)) throw new Error('Usage: npm run analyse -- <solana|ethereum|base|bsc> <token address>');
   const config = loadConfig();
   const repo = createEventRepository(openDatabase(config.dbPath));
-  const engine = new AnalysisEngine({ config: config.analysis, repo, ingest: () => false, logger: silentLogger });
+  const engine = new AnalysisEngine({
+    config: config.analysis, repo, ingest: () => false, logger: silentLogger,
+    fetchSolanaMint: (mint) => fetchSolanaMint(config.solanaRpcUrl, mint),
+  });
   const { market, score, smartBuyers } = await engine.analyse({ chain, token, symbol: null, name: null });
   const m = market;
   process.stdout.write(`\n${chain} ${token}\n`);

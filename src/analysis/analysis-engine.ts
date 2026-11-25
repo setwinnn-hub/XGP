@@ -6,6 +6,7 @@ import type { EventRepository } from '../storage/event-repo.ts';
 import { fetchMarket, type MarketSnapshot } from './market.ts';
 import { scoreToken, type TokenScore } from './score.ts';
 import { fetchSecurity, isVerified, type SecurityReport } from './security.ts';
+import { mergeSolanaMint, type SolanaMintFacts } from './solana-mint.ts';
 
 const SOURCE = 'analysis';
 const MAX_PENDING = 300;
@@ -30,6 +31,8 @@ export interface AnalysisDeps {
   readonly logger: Logger;
   readonly fetchMarket?: typeof fetchMarket;
   readonly fetchSecurity?: typeof fetchSecurity;
+  /** Reads a Solana mint's authorities and fees on-chain (works when GoPlus is down or rate limited). */
+  readonly fetchSolanaMint?: (mint: string) => Promise<SolanaMintFacts | null>;
   readonly now?: () => number;
   /** Called after every analysis (e.g. to start collecting the token's swaps). */
   readonly onAnalysed?: (ref: TokenRef, result: AnalysisResult) => void;
@@ -185,13 +188,24 @@ export class AnalysisEngine {
     }
   }
 
+  /** On-chain mint facts for Solana tokens; null for other chains or when the RPC fails. */
+  private async solanaMint(ref: TokenRef): Promise<SolanaMintFacts | null> {
+    if (ref.chain !== 'solana' || !this.deps.fetchSolanaMint) return null;
+    try {
+      return await this.deps.fetchSolanaMint(ref.token);
+    } catch (error: unknown) {
+      this.logger.debug('solana mint lookup failed', { token: ref.token, error: errorMessage(error) });
+      return null;
+    }
+  }
+
   /** One analysis: fetch, score, store, and alert when thresholds are met. */
   async analyse(ref: TokenRef): Promise<AnalysisResult> {
     const market = await (this.deps.fetchMarket ?? fetchMarket)(ref.chain, ref.token).catch((error: unknown) => {
       this.logger.debug('market lookup failed', { token: ref.token, error: errorMessage(error) });
       return null;
     });
-    const security = await this.security(ref);
+    const security = mergeSolanaMint(await this.security(ref), await this.solanaMint(ref));
     const smartBuyers = this.deps.repo.countSmartBuyers(ref.chain, ref.token);
     const newsMentions = ref.symbol ? this.deps.repo.countNewsMentions(ref.symbol, this.now() - NEWS_WINDOW_MS) : 0;
     const score = scoreToken(market, security, { smartMoneyBuyers: smartBuyers, newsMentions, now: this.now() });

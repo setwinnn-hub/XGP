@@ -1,4 +1,4 @@
-import type { MarketSnapshot } from '../analysis/market.ts';
+import { exitLiquidityUsd, type MarketSnapshot } from '../analysis/market.ts';
 import type { PairReserves } from './pool-reserves.ts';
 import type { GemSettings } from './settings.ts';
 import { estimateSlippage } from './slippage.ts';
@@ -105,10 +105,7 @@ function poolValue(market: MarketSnapshot | null, reserves: PairReserves | null)
   }
   if (market?.liquidityUsd === null || market?.liquidityUsd === undefined) return { usd: null, exitUsd: null, source: 'none', quoteUsd: null };
   const quoteUsd = market.priceUsd && market.priceNative ? market.priceUsd / market.priceNative : null;
-  const exitUsd = quoteUsd !== null && market.liquidityQuote !== null && market.liquidityQuote !== undefined
-    ? Math.min(market.liquidityUsd, 2 * market.liquidityQuote * quoteUsd)
-    : null;
-  return { usd: market.liquidityUsd, exitUsd, source: 'dexscreener', quoteUsd };
+  return { usd: market.liquidityUsd, exitUsd: exitLiquidityUsd(market), source: 'dexscreener', quoteUsd };
 }
 
 function changeFromPeak(history: readonly LiquiditySnapshot[], current: number | null, now: number): number | null {
@@ -132,7 +129,7 @@ export function assessLiquidity(input: LiquidityInput): LiquidityReport {
   const oneSided = value.usd !== null && value.usd > 0 && value.exitUsd !== null && value.exitUsd / value.usd < ONE_SIDED_SHARE * 2;
   if (oneSided) {
     flags.push('ONE_SIDED');
-    reasons.push(`สภาพคล่องเกือบทั้งหมดเป็นตัว token เอง ฝั่งเงิน (ETH/BNB) มีแค่ $${((value.exitUsd ?? 0) / 2).toFixed(2)} ขายออกได้น้อยมาก`);
+    reasons.push(`สภาพคล่องเกือบทั้งหมดเป็นตัว token เอง ฝั่งเงิน (SOL/ETH/BNB/USDC) มีแค่ $${((value.exitUsd ?? 0) / 2).toFixed(2)} ขายออกได้น้อยมาก`);
   }
   if (reserves && market?.liquidityQuote && market.liquidityQuote > 0) {
     const gap = Math.abs(reserves.quoteReserve - market.liquidityQuote) / market.liquidityQuote;

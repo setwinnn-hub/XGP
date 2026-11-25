@@ -69,6 +69,18 @@ function toSnapshot(pair: Raw): MarketSnapshot {
   };
 }
 
+/**
+ * Liquidity a seller can actually exit into: twice the pool's quote side (SOL/USDC/WETH...) in USD,
+ * capped at the reported liquidity. DexScreener values the token side at the token's own pool
+ * price, so a pool seeded with a tiny quote amount can report millions. null when the quote
+ * reserve or native price is missing.
+ */
+export function exitLiquidityUsd(m: MarketSnapshot): number | null {
+  const { liquidityUsd, priceUsd, priceNative, liquidityQuote } = m;
+  if (liquidityUsd === null || !priceUsd || !priceNative || liquidityQuote === null || liquidityQuote === undefined) return null;
+  return Math.min(liquidityUsd, 2 * liquidityQuote * (priceUsd / priceNative));
+}
+
 /** Picks the token's most liquid pair (bonding-curve pairs have no liquidity; then highest volume). */
 export function pickBestPair(pairs: unknown, token: string): MarketSnapshot | null {
   if (!Array.isArray(pairs)) return null;
