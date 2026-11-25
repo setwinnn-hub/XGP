@@ -91,10 +91,12 @@ function rightFrame(d: CardData, accent: string): string {
 /**
  * SVG for one card. With `background` (a data: URI) it is self-contained, for browser previews;
  * without it, it is a transparent overlay that the renderer puts on top of the picture.
+ * Layout is designed on a 1280x722 grid; `outWidth` scales it (vector text stays sharp).
  */
-export function buildCardSvg(d: CardData, background: string | null = null): string {
+export function buildCardSvg(d: CardData, background: string | null = null, outWidth: number = CARD_W): string {
   const accent = COLORS[d.accent];
-  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${CARD_W}" height="${CARD_H}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
+  const outHeight = Math.round((outWidth * CARD_H) / CARD_W);
+  return `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="${outWidth}" height="${outHeight}" viewBox="0 0 ${CARD_W} ${CARD_H}">`
     + (background ? `<image href="${xml(background)}" xlink:href="${xml(background)}" x="0" y="0" width="${CARD_W}" height="${CARD_H}" preserveAspectRatio="none"/>` : '')
     + `<rect x="${LEFT.x + 6}" y="${LEFT.y + 6}" width="${LEFT.w - 12}" height="${LEFT.h - 12}" rx="22" fill="#020617" fill-opacity="0.55"/>`
     + `<rect x="${RIGHT.x + 6}" y="${RIGHT.y + 6}" width="${RIGHT.w - 12}" height="${RIGHT.h - 12}" rx="22" fill="#020617" fill-opacity="0.55"/>`

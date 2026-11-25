@@ -73,7 +73,7 @@ describe('card renderer', () => {
     assert.equal(jpeg[0], 0xff);
     assert.equal(jpeg[1], 0xd8);
     const meta = await sharp(jpeg).metadata();
-    assert.equal(meta.width, 1280);
+    assert.equal(meta.width, 1280, "a small picture is drawn at the minimum width");
   });
 });
 
@@ -111,6 +111,7 @@ describe('Discord upload with a card', () => {
     assert.deepEqual(json.embeds[0].fields, []);
     assert.ok(json.embeds[0].description.includes('```GwytBanGx9eS55TpbG3w6veLtT8PKRcs3SXiS7nFpump```'), 'contract stays copyable');
     assert.ok(json.embeds[0].description.includes('Pump.fun'), 'links stay clickable');
+    assert.match(json.embeds[0].description, /⏱️ ตรวจพบ <t:\d+:R>/, 'live "x minutes ago" stays as Discord text');
   });
 
   it('still sends the alert (as plain JSON) when the card cannot be drawn', async () => {

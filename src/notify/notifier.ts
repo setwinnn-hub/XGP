@@ -98,10 +98,11 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       const [first] = payload.embeds;
       if (!first) return payload;
       // The card carries everything else; only what a picture cannot do stays as text:
-      // the contract address to copy and the links to click.
+      // the live "x minutes ago", the contract address to copy and the links to click.
+      const unix = Math.floor(event.detectedAt / 1000);
       const compact = {
         color: first.color,
-        description: [caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
+        description: [`⏱️ ตรวจพบ <t:${unix}:R>`, caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
         fields: [],
         image: { url: `attachment://${CARD_FILE}` },
         ...(first.footer ? { footer: first.footer } : {}),
