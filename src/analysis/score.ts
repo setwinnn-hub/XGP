@@ -88,8 +88,11 @@ function marketRisks(m: MarketSnapshot): RiskFinding[] {
   const liq = m.liquidityUsd;
   const onCurve = m.dexId === 'pumpfun';
   if (!onCurve && liq !== null && liq < 5_000) out.push({ level: 'HIGH', text: `สภาพคล่องต่ำมาก ${usd(liq)}` });
-  if (!onCurve && liq !== null && m.marketCapUsd !== null && m.marketCapUsd > 0 && liq / m.marketCapUsd < 0.02) {
-    out.push({ level: 'HIGH', text: `Market cap ${usd(m.marketCapUsd)} สูงเกินสภาพคล่อง ${usd(liq)} มาก (ราคาอาจถูกปั่น)` });
+  // The manipulation check uses market cap, or FDV when no market cap is published (labelled as such).
+  const cap = m.marketCapUsd ?? m.fdvUsd;
+  const capLabel = m.marketCapUsd !== null ? 'Market cap' : 'FDV';
+  if (!onCurve && liq !== null && cap !== null && cap > 0 && liq / cap < 0.02) {
+    out.push({ level: 'HIGH', text: `${capLabel} ${usd(cap)} สูงเกินสภาพคล่อง ${usd(liq)} มาก (ราคาอาจถูกปั่น)` });
   }
   const h1 = m.priceChangePct.h1;
   if (h1 !== null && h1 > 10_000) out.push({ level: 'HIGH', text: `ราคา 1 ชม. เปลี่ยน +${h1.toExponential(1)}% ผิดธรรมชาติ` });

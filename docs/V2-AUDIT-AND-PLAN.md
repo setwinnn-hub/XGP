@@ -142,6 +142,50 @@
 
 ---
 
+## 7. รายงานผลแต่ละ Stage
+
+### Stage 3: Baseline ✅
+- commit `7e3e29f` (เฉพาะในเครื่อง) ถ้าต้องการย้อนกลับ ใช้ `git reset --hard 7e3e29f`
+- ก่อน commit: typecheck ผ่าน, test ผ่าน 145/145, `check:evm` ครบ 100%, ไม่มี secret, ฐานข้อมูล หรือ log ติดเข้า commit
+
+### Stage 5: แปลงเป็นบาท + ตรวจสอบ Market Cap ✅
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `src/enrich/prices.ts` | เพิ่มอัตรา THB/USD จาก CoinGecko (USDT) และ**แหล่งสำรอง** exchangerate-api.com (อัปเดตรายวัน) เก็บแหล่งที่มา เวลา และอายุการใช้งานของอัตรา ส่วน API เดิม `usdValue` ไม่เปลี่ยน |
+| `src/analysis/market.ts` | แยก `marketCapUsd` ออกจาก `fdvUsd` **(เดิมเมื่อไม่มี market cap จะใช้ FDV แทน ซึ่ง V2 ห้าม)**, เพิ่ม `pairAddress` |
+| `src/analysis/score.ts` | ตอนตรวจการปั่นราคา ถ้าไม่มี market cap จะใช้ FDV แทนและติดป้ายว่า "FDV" ชัดเจน |
+| `src/analysis/analysis-engine.ts` | บันทึก `fdvUsd` ลงผลวิเคราะห์ด้วย |
+| `src/gem/market-cap.ts` (ใหม่) | สถานะ VERIFIED / ESTIMATED / UNVERIFIED, แยก circulating, FDV, total และ burned, แสดง THB, บันทึกแหล่งที่มา วิธีคำนวณ และเวลา |
+| `src/gem/supply.ts` (ใหม่) | อ่าน supply จาก chain: EVM ใช้ multicall `totalSupply`/`decimals`/ยอดใน burn address, Solana ใช้ `getTokenSupply` |
+| `src/gem/settings.ts` (ใหม่) | ตาราง `settings` เก็บช่วง market cap (ค่าเริ่มต้น 66,000–500,000 บาท) ไว้ให้ Dashboard แก้ได้ |
+| `scripts/mcap.ts` (ใหม่) | คำสั่ง `npm run mcap -- <chain> <token>` |
+| `test/gem-mcap.test.ts` (ใหม่) | 11 tests |
+
+**กฎการให้สถานะ:**
+- **VERIFIED:** อ่าน supply บน chain ได้ และ FDV ที่คำนวณได้ตรงกับที่ DexScreener คำนวณแยกเองภายใน 5%
+- **ESTIMATED:** ต่างกันไม่เกิน 20% หรือไม่มีค่าให้เทียบ
+- **UNVERIFIED:** ไม่มีราคา หรือต่างกันเกิน 20%
+- ระบบจะไม่นำ FDV มาแสดงแทน market cap
+- ถ้าไม่มีอัตราแลกเปลี่ยน ค่าบาทจะว่างไว้ ไม่เดา
+
+**ผลทดสอบจริง (25 พ.ย. 18:18–18:20 UTC):**
+| เหรียญ | ผล |
+|---|---|
+| USELESS (BSC) | VERIFIED ต่าง 0.0%, ฿30.4M → ABOVE |
+| Pump.fun (Solana) | VERIFIED ต่าง 0.3–0.8%, ฿1.59M → ABOVE |
+| เหรียญใหม่บน Base / ETH | ยังไม่มีราคาบน DEX → UNVERIFIED (ถูกต้องตามกฎ) |
+| TRUMP ปลอม (BSC) | ราคาเหลือ 1.98×10⁻¹⁹ USD (ถูก rug แล้ว) → ฿0 → BELOW |
+
+**ปัญหาที่เจอและแก้แล้ว:**
+- CoinGecko แบบไม่มี key จำกัดจำนวนครั้งเมื่อเรียกติดกัน ทำให้รอบหนึ่งได้ "FX unavailable"
+- แก้โดยเพิ่มแหล่งสำรอง ซึ่งต่างจาก CoinGecko แค่ 0.3% (33.94 กับ 34.04)
+
+**Regression:** test ผ่าน 156/156, `check:evm` ครบ 100% (ETH 4/4, Base 17/17, BSC 5/5)
+
+**ข้อจำกัดที่ยังเหลือ:**
+- circulating supply ยังไม่หักส่วนที่ lock ไว้ (GoPlus มีข้อมูล lock ของ LP แต่ไม่มีของ token) จะทำใน Stage 8
+- ระหว่างที่เหรียญ Pump.fun ยังอยู่บน bonding curve supply ส่วนใหญ่อยู่ใน curve แต่นับเป็น circulating ตามวิธีเดียวกับ DexScreener
+
 ## 6. การตัดสินใจ (ยืนยันแล้ว 25 พ.ย. 2026)
 1. **ช่วง market cap เริ่มต้น: 66,000–500,000 บาท** (≈ $2k–$15k) ปรับได้ใน Dashboard ภายหลัง
 2. **ทำ EVM (ETH/Base/BNB) ก่อน** ส่วน Solana จะเพิ่มเมื่อมี Helius key ระหว่างนี้ Solana ใช้ข้อมูลจาก DexScreener ได้อย่างเดียว และติดป้าย LOW CONFIDENCE

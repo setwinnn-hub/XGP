@@ -3,10 +3,14 @@ import type { ChainId } from '../core/types.ts';
 /** Market facts for one token, from its most liquid DexScreener pair. */
 export interface MarketSnapshot {
   readonly pairUrl: string;
+  readonly pairAddress: string | null;
   readonly dexId: string;
   readonly priceUsd: number | null;
   readonly liquidityUsd: number | null;
+  /** DexScreener's circulating market cap. Never filled from FDV. */
   readonly marketCapUsd: number | null;
+  /** Fully diluted valuation (price x total supply). */
+  readonly fdvUsd: number | null;
   readonly volumeUsd: { readonly m5: number; readonly h1: number; readonly h24: number };
   readonly txnsH1: { readonly buys: number; readonly sells: number };
   readonly priceChangePct: { readonly m5: number | null; readonly h1: number | null; readonly h24: number | null };
@@ -39,10 +43,12 @@ function toSnapshot(pair: Raw): MarketSnapshot {
   const image = typeof info.imageUrl === 'string' && /^https:\/\/([a-z0-9-]+\.)*dexscreener\.com\//i.test(info.imageUrl) ? info.imageUrl : null;
   return {
     pairUrl: typeof pair.url === 'string' ? pair.url : '',
+    pairAddress: typeof pair.pairAddress === 'string' ? pair.pairAddress : null,
     dexId: typeof pair.dexId === 'string' ? pair.dexId : 'unknown',
     priceUsd: num(pair.priceUsd),
     liquidityUsd: num(obj(pair.liquidity).usd),
-    marketCapUsd: num(pair.marketCap) ?? num(pair.fdv),
+    marketCapUsd: num(pair.marketCap),
+    fdvUsd: num(pair.fdv),
     volumeUsd: { m5: num(volume.m5) ?? 0, h1: num(volume.h1) ?? 0, h24: num(volume.h24) ?? 0 },
     txnsH1: { buys: num(h1.buys) ?? 0, sells: num(h1.sells) ?? 0 },
     priceChangePct: { m5: num(change.m5), h1: num(change.h1), h24: num(change.h24) },

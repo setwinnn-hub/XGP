@@ -17,8 +17,8 @@ const NOW = 1_795_600_000_000;
 
 function market(overrides: Partial<MarketSnapshot> = {}): MarketSnapshot {
   return {
-    pairUrl: 'https://dexscreener.com/bsc/0xpair', dexId: 'pancakeswap', priceUsd: 0.01,
-    liquidityUsd: 80_000, marketCapUsd: 900_000,
+    pairUrl: 'https://dexscreener.com/bsc/0xpair', pairAddress: '0xpair', dexId: 'pancakeswap', priceUsd: 0.01,
+    liquidityUsd: 80_000, marketCapUsd: 900_000, fdvUsd: 900_000,
     volumeUsd: { m5: 12_000, h1: 60_000, h24: 200_000 }, txnsH1: { buys: 120, sells: 40 },
     priceChangePct: { m5: 3, h1: 45, h24: 80 }, pairCreatedAt: NOW - 3_600_000, socials: 2, websites: 1, imageUrl: null,
     ...overrides,

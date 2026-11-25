@@ -80,6 +80,7 @@ function analysisEvent(ref: TokenRef, result: AnalysisResult, key: string, alert
       priceUsd: m?.priceUsd ?? null,
       liquidityUsd: m?.liquidityUsd ?? null,
       marketCapUsd: m?.marketCapUsd ?? null,
+      fdvUsd: m?.fdvUsd ?? null,
       volumeH1Usd: m?.volumeUsd.h1 ?? null,
       buysH1: m?.txnsH1.buys ?? null,
       sellsH1: m?.txnsH1.sells ?? null,

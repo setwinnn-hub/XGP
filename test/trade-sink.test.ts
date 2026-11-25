@@ -4,7 +4,7 @@ import type { PriceBook } from '../src/enrich/prices.ts';
 import type { WalletTrade } from '../src/trades/trade-event.ts';
 import { createTradeSink } from '../src/trades/trade-sink.ts';
 
-const prices: PriceBook = { usdValue: (symbol, amount) => (symbol === 'SOL' ? amount * 200 : null), start: () => undefined, stop: () => undefined };
+const prices: PriceBook = { usdValue: (symbol, amount) => (symbol === 'SOL' ? amount * 200 : null), fxRate: () => null, start: () => undefined, stop: () => undefined };
 const wallet = { chain: 'solana' as const, address: 'W1', label: 'Alpha', addedAt: 0 };
 const trade = { side: 'BUY' as const, token: 'MintX', tokenAmount: 100, quoteSymbol: 'SOL', quoteAmount: 0.5, quoteIsStable: false };
 

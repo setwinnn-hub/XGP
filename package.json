@@ -21,6 +21,7 @@
     "news:preview": "node --env-file-if-exists=.env scripts/news-preview.ts",
     "analyse": "node --env-file-if-exists=.env scripts/analyse-token.ts",
     "smartmoney": "node --env-file-if-exists=.env scripts/smart-money.ts",
+    "mcap": "node --env-file-if-exists=.env scripts/mcap.ts",
     "find:wallets": "node --env-file-if-exists=.env scripts/find-active-wallets.ts"
   },
   "dependencies": {
