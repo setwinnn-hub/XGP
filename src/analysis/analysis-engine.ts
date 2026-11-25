@@ -43,6 +43,8 @@ export interface TokenRef {
   readonly token: string;
   readonly symbol: string | null;
   readonly name: string | null;
+  /** On an on-chain trending list (GeckoTerminal) when scheduled. */
+  readonly trending?: boolean;
 }
 
 interface Job extends TokenRef {
@@ -208,7 +210,7 @@ export class AnalysisEngine {
     const security = mergeSolanaMint(await this.security(ref), await this.solanaMint(ref));
     const smartBuyers = this.deps.repo.countSmartBuyers(ref.chain, ref.token);
     const newsMentions = ref.symbol ? this.deps.repo.countNewsMentions(ref.symbol, this.now() - NEWS_WINDOW_MS) : 0;
-    const score = scoreToken(market, security, { smartMoneyBuyers: smartBuyers, newsMentions, now: this.now() });
+    const score = scoreToken(market, security, { smartMoneyBuyers: smartBuyers, newsMentions, now: this.now(), trending: ref.trending === true });
     return { market, security, score, smartBuyers };
   }
 
@@ -237,6 +239,7 @@ export class AnalysisEngine {
 export function tokenToAnalyse(event: RadarEvent, alerted: boolean): TokenRef | null {
   const ref = { chain: event.chain, token: event.tokenAddress, symbol: event.tokenSymbol, name: event.tokenName };
   if (event.kind === 'wallet_trade') return event.details.side === 'BUY' ? ref : null;
+  if (event.kind === 'trending') return event.chain !== 'offchain' && event.tokenAddress ? { ...ref, trending: true } : null;
   if (event.kind === 'token_migrated' || event.kind === 'token_launched' || event.kind === 'pair_created') return alerted ? ref : null;
   return null;
 }

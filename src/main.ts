@@ -18,6 +18,7 @@ import { decideAlert } from './notify/filters.ts';
 import { AnalysisEngine, tokenToAnalyse } from './analysis/analysis-engine.ts';
 import { fetchSolanaMint } from './analysis/solana-mint.ts';
 import { createCoinGeckoTrendingAdapter } from './news/coingecko-trending.ts';
+import { createGeckoTerminalTrendingAdapter } from './news/geckoterminal-trending.ts';
 import { createNewsAdapter } from './news/news-adapter.ts';
 import { openDatabase } from './storage/db.ts';
 import { createEventRepository, type EventRepository } from './storage/event-repo.ts';
@@ -106,6 +107,7 @@ function buildAdapters(w: Wiring): Adapter[] {
     ? [
         createNewsAdapter({ logger, health, ingest, onPublished: onChainTime }),
         createCoinGeckoTrendingAdapter({ logger, health, ingest, minRank: config.news.trendingMinRank }),
+        createGeckoTerminalTrendingAdapter({ logger, health, ingest, chains: ['solana', ...config.evmChains.map((c) => c.id)] }),
       ]
     : [];
   return [

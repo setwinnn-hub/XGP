@@ -9,6 +9,8 @@ export interface ScoreContext {
   /** Fresh news mentions of the token's symbol. */
   readonly newsMentions: number;
   readonly now: number;
+  /** The token is on GeckoTerminal's trending list (real trades and volume). */
+  readonly trending?: boolean;
 }
 
 export interface TokenScore {
@@ -66,6 +68,7 @@ function contextFindings(c: ScoreContext, m: MarketSnapshot | null): Finding[] {
   const out: Finding[] = [];
   if (c.smartMoneyBuyers >= 2) out.push({ points: 20, text: `Wallet ที่ติดตาม ${c.smartMoneyBuyers} ตัวซื้อเหรียญนี้` });
   else if (c.smartMoneyBuyers === 1) out.push({ points: 10, text: 'Wallet ที่ติดตามซื้อเหรียญนี้' });
+  if (c.trending) out.push({ points: 10, text: 'ติด Trending บน GeckoTerminal' });
   if (c.newsMentions > 0) out.push({ points: Math.min(15, c.newsMentions * 5), text: `ถูกพูดถึงในข่าว ${c.newsMentions} ครั้ง` });
   if (m?.pairCreatedAt && c.now - m.pairCreatedAt < 24 * 3_600_000) out.push({ points: 5, text: 'ยังเป็นเหรียญใหม่ (อายุไม่ถึง 24 ชม.)' });
   return out;

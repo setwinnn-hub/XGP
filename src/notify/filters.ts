@@ -62,6 +62,8 @@ export function decideAlert(event: RadarEvent, config: FilterConfig, now: number
     case 'news':
       return decideNews(event, config, now);
     case 'trending':
+      // GeckoTerminal lists ~20 pools per chain: they go to analysis, which alerts only on qualified tokens.
+      if (event.details.trendType === 'geckoterminal') return { alert: false, reason: 'geckoterminal trend: analysed, not posted' };
       return { alert: true, category: 'TRENDING', reason: `trend: ${String(event.details.trendType)}` };
     case 'analysis':
       if (event.details.alert === 'opportunity') return { alert: true, category: 'HIGH_OPPORTUNITY', reason: 'score above threshold' };
