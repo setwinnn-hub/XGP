@@ -10,6 +10,9 @@ import { buildTradeAlert } from './format-trade.ts';
 import { buildNewsAlert, buildTrendAlert } from './format-news.ts';
 import { buildAnalysisAlert } from './format-analysis.ts';
 import { fetchPreviewImage } from '../viral/preview-image.ts';
+import type { CardData } from './card.ts';
+import { analysisCard, tokenCard, tradeCard } from './card-data.ts';
+import type { CardRenderer } from './card-render.ts';
 
 export interface NotifierDeps {
   readonly config: AppConfig;
@@ -20,6 +23,18 @@ export interface NotifierDeps {
   readonly lookupName?: (event: RadarEvent) => Promise<TokenName | null>;
   /** Injectable for tests; defaults to reading the article's og:image. */
   readonly previewImage?: (url: string) => Promise<string | null>;
+  /** Draws the picture card attached to token, trade and analysis alerts; none = text only. */
+  readonly renderCard?: CardRenderer;
+}
+
+const CARD_FILE = 'card.jpg';
+/** A card that takes longer than this is skipped, so a slow render never delays an alert much. */
+const CARD_RENDER_TIMEOUT_MS = 1_500;
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<T>((_, reject) => { timer = setTimeout(() => reject(new Error(`timeout after ${ms} ms`)), ms); });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
 const NEWS_IMAGE_WAIT_MS = 3_000;
@@ -75,6 +90,24 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     return found ? { ...event, tokenName: found.name, tokenSymbol: found.symbol } : event;
   };
 
+  /** Adds the picture card to the first embed; on any failure or slowness the alert goes without it. */
+  const withCard = async (payload: DiscordPayload, card: CardData): Promise<DiscordPayload> => {
+    if (!deps.renderCard) return payload;
+    try {
+      const image = await withTimeout(deps.renderCard(card), CARD_RENDER_TIMEOUT_MS);
+      const [first, ...rest] = payload.embeds;
+      if (!first) return payload;
+      return {
+        ...payload,
+        embeds: [{ ...first, image: { url: `attachment://${CARD_FILE}` } }, ...rest],
+        files: [{ name: CARD_FILE, data: image, contentType: 'image/jpeg' }],
+      };
+    } catch (error: unknown) {
+      logger.warn('card render failed, sending without it', { error: errorMessage(error) });
+      return payload;
+    }
+  };
+
   const send = async (event: RadarEvent, category: AlertCategory, payload: DiscordPayload, record: boolean): Promise<void> => {
     const processedAt = Date.now();
     const target = queues.get(category);
@@ -111,7 +144,7 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     const priorSameSide = deps.repo.countPriorTrades(
       event.chain, String(event.details.wallet), event.tokenAddress, String(event.details.side), event.detectedAt,
     );
-    const payload = buildTradeAlert(event, { isWhale, priorSameSide });
+    const payload = await withCard(buildTradeAlert(event, { isWhale, priorSameSide }), tradeCard(event, { isWhale, priorSameSide }));
     await send(event, category, payload, true);
     // Copy only to a dedicated WHALE webhook, never to the DEFAULT fallback.
     const whaleUrl = deps.config.webhooks.WHALE;
@@ -126,10 +159,10 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       }
       if (event.kind === 'wallet_trade') return sendTrade(event, decision.category);
       if (event.kind === 'trending') return send(event, decision.category, buildTrendAlert(event), true);
-      if (event.kind === 'analysis') return send(event, decision.category, buildAnalysisAlert(event), true);
+      if (event.kind === 'analysis') return send(event, decision.category, await withCard(buildAnalysisAlert(event), analysisCard(event)), true);
       if (event.kind === 'news') return send(event, decision.category, buildNewsAlert(event, await newsImage(event)), true);
       const named = event.kind === 'token_migrated' ? await withName(event) : event;
-      await send(named, decision.category, buildTokenAlert(named), true);
+      await send(named, decision.category, await withCard(buildTokenAlert(named), tokenCard(named)), true);
     },
     async system(text, ok) {
       const target = queues.get('SYSTEM');

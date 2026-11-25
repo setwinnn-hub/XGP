@@ -14,6 +14,8 @@ import { httpUrlFor, loadConfig, wsUrlFor, type AppConfig } from './config.ts';
 import { createPriceBook, type PriceBook } from './enrich/prices.ts';
 import { createNameLookup } from './enrich/token-names.ts';
 import { createNotifier, type Notifier } from './notify/notifier.ts';
+import { createCardRenderer, DEFAULT_CARD_BG, type CardRenderer } from './notify/card-render.ts';
+import { existsSync } from 'node:fs';
 import { decideAlert } from './notify/filters.ts';
 import { AnalysisEngine, tokenToAnalyse } from './analysis/analysis-engine.ts';
 import { fetchSolanaMint } from './analysis/solana-mint.ts';
@@ -147,7 +149,17 @@ function main(): void {
   const health = new HealthRegistry();
   const bus = createEventBus(logger);
   const ingest = createIngest({ repo, bus, health, logger });
-  const notifier = createNotifier({ config, repo, logger });
+  // Picture cards are on while assets/card-bg.webp exists; the background is loaded once.
+  const cardRenderer = existsSync(DEFAULT_CARD_BG) ? createCardRenderer(DEFAULT_CARD_BG) : null;
+  logger.info(cardRenderer ? 'alert cards on' : 'alert cards off (no background picture)', { background: DEFAULT_CARD_BG });
+  const renderCard: CardRenderer | undefined = cardRenderer
+    ? async (card) => {
+        const render = await cardRenderer;
+        if (!render) throw new Error('card background could not be loaded');
+        return render(card);
+      }
+    : undefined;
+  const notifier = createNotifier({ config, repo, logger, renderCard });
   const registry = new WalletRegistry(createWalletRepository(db), logger);
   const prices = createPriceBook(logger);
   const swapStore = createSwapStore(db);

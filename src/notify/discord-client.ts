@@ -22,9 +22,29 @@ export interface Embed {
   readonly thumbnail?: { readonly url: string };
 }
 
+/** A file uploaded with the message; an embed shows it with `attachment://<name>`. */
+export interface DiscordFile {
+  readonly name: string;
+  readonly data: Uint8Array;
+  readonly contentType: string;
+}
+
 export interface DiscordPayload {
   readonly content?: string;
   readonly embeds: readonly Embed[];
+  readonly files?: readonly DiscordFile[];
+}
+
+/** JSON body, or multipart (payload_json + files[n]) when the payload carries files. */
+export function requestBody(payload: DiscordPayload): { body: string | FormData; headers: Record<string, string> } {
+  const { files, ...message } = payload;
+  const json = { ...message, allowed_mentions: { parse: [] } };
+  if (!files || files.length === 0) return { body: JSON.stringify(json), headers: { 'content-type': 'application/json' } };
+  const form = new FormData();
+  form.append('payload_json', JSON.stringify({ ...json, attachments: files.map((f, id) => ({ id, filename: f.name })) }));
+  files.forEach((f, i) => form.append(`files[${i}]`, new Blob([Uint8Array.from(f.data)], { type: f.contentType }), f.name));
+  // No content-type header: fetch sets the multipart boundary itself.
+  return { body: form, headers: {} };
 }
 
 export type SendOutcome =
@@ -115,11 +135,11 @@ export class WebhookQueue {
     | { readonly done: true; readonly outcome: SendOutcome }
     | { readonly done: false; readonly error: string; readonly retryAfterMs?: number }
   > {
-    const body = JSON.stringify({ ...payload, allowed_mentions: { parse: [] } });
+    const { body, headers } = requestBody(payload);
     const target = messageId ? `${this.url}/messages/${messageId}` : `${this.url}?wait=true`;
     const response = await this.fetchFn(target, {
       method: messageId ? 'PATCH' : 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body,
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
