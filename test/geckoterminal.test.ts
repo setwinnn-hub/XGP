@@ -115,16 +115,30 @@ describe('GeckoTerminal trending adapter', () => {
     assert.ok(health.snapshot().some((s) => s.name === 'geckoterminal:trending' && s.lastBeatAt !== null));
   });
 
-  it('keeps going when one chain fails', async () => {
+  it('keeps going when one chain is rate limited, then retries that chain once', async () => {
     const ingested: RadarEvent[] = [];
-    let call = 0;
+    const urls: string[] = [];
     const adapter = createGeckoTerminalTrendingAdapter({
       logger: silentLogger, health: new HealthRegistry(), ingest: (_n, e) => { ingested.push(e); return true; },
-      chains: ['solana', 'base'], gapMs: 0,
-      fetchFn: (async () => { call += 1; return call === 1 ? new Response('rate limited', { status: 429 }) : new Response(JSON.stringify(BODY)); }) as unknown as typeof fetch,
+      chains: ['solana', 'base'], gapMs: 0, retryAfterMs: 0,
+      fetchFn: (async (url: string) => {
+        urls.push(url);
+        return urls.length === 1 ? new Response('rate limited', { status: 429 }) : new Response(JSON.stringify(BODY));
+      }) as typeof fetch,
     });
     await adapter.pollOnce();
-    assert.equal(ingested.length, 1);
-    assert.equal(ingested[0]?.chain, 'base');
+    assert.deepEqual(ingested.map((e) => e.chain), ['base', 'solana']);
+    assert.equal(urls.length, 3);
+  });
+
+  it('does not retry a chain that failed for another reason', async () => {
+    let calls = 0;
+    const adapter = createGeckoTerminalTrendingAdapter({
+      logger: silentLogger, health: new HealthRegistry(), ingest: () => true,
+      chains: ['solana'], gapMs: 0, retryAfterMs: 0,
+      fetchFn: (async () => { calls += 1; return new Response('down', { status: 500 }); }) as unknown as typeof fetch,
+    });
+    await adapter.pollOnce();
+    assert.equal(calls, 1);
   });
 });

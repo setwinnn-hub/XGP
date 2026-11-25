@@ -7,7 +7,9 @@ const SOURCE = 'geckoterminal:trending';
 const API = 'https://api.geckoterminal.com/api/v2/networks';
 /** GeckoTerminal's free API allows ~30 calls/min; 4 chains every 5 minutes stays far below. */
 const POLL_MS = 5 * 60_000;
-const GAP_MS = 2_500;
+/** Back-to-back calls get HTTP 429 well below the advertised limit (seen live with a 2.5 s gap). */
+const GAP_MS = 10_000;
+const RETRY_AFTER_MS = 60_000;
 const STALE_AFTER_MS = 20 * 60_000;
 /** A token re-enters analysis at most once per window while it stays trending. */
 const BUCKET_MS = 6 * 60 * 60_000;
@@ -103,7 +105,11 @@ export interface GeckoTerminalTrendingDeps extends AdapterDeps {
   readonly fetchFn?: typeof fetch;
   /** Pause between chain requests (tests pass 0). */
   readonly gapMs?: number;
+  /** Wait before retrying chains that answered HTTP 429 (tests pass 0). */
+  readonly retryAfterMs?: number;
 }
+
+type ChainResult = 'ok' | 'empty' | 'rate-limited' | 'failed';
 
 /**
  * Tokens trending on GeckoTerminal (by trades and volume, per chain). They are not posted on
@@ -117,31 +123,49 @@ export function createGeckoTerminalTrendingAdapter(deps: GeckoTerminalTrendingDe
   let running = false;
   deps.health.register(SOURCE, STALE_AFTER_MS);
 
-  const pollChain = async (chain: ChainId): Promise<boolean> => {
+  const pollChain = async (chain: ChainId): Promise<ChainResult> => {
     const url = `${API}/${NETWORK[chain]}/trending_pools?page=1&include=base_token`;
     const response = await (deps.fetchFn ?? fetch)(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
+    if (response.status === 429) return 'rate-limited';
     if (!response.ok) {
       logger.warn('trending pools fetch failed', { chain, status: response.status });
-      return false;
+      return 'failed';
     }
     const pools = parseTrendingPools(await response.json(), chain);
     const now = Date.now();
     for (const pool of pools) deps.ingest(SOURCE, trendingPoolEvent(pool, chain, now));
-    return pools.length > 0;
+    return pools.length > 0 ? 'ok' : 'empty';
+  };
+
+  const safePoll = (chain: ChainId): Promise<ChainResult> => pollChain(chain).catch((error: unknown) => {
+    logger.warn('trending pools poll failed', { chain, error: errorMessage(error) });
+    return 'failed' as const;
+  });
+
+  /** Polls each chain in turn; chains that answered 429 are retried once after a pause. */
+  const pollChains = async (list: readonly ChainId[]): Promise<{ answered: boolean; limited: ChainId[] }> => {
+    let answered = false;
+    const limited: ChainId[] = [];
+    for (const [i, chain] of list.entries()) {
+      if (i > 0) await sleep(deps.gapMs ?? GAP_MS);
+      const result = await safePoll(chain);
+      answered ||= result === 'ok';
+      if (result === 'rate-limited') limited.push(chain);
+    }
+    return { answered, limited };
   };
 
   const pollOnce = async (): Promise<void> => {
     if (running) return;
     running = true;
     try {
-      let answered = false;
-      for (const [i, chain] of chains.entries()) {
-        if (i > 0) await sleep(deps.gapMs ?? GAP_MS);
-        const ok = await pollChain(chain).catch((error: unknown) => {
-          logger.warn('trending pools poll failed', { chain, error: errorMessage(error) });
-          return false;
-        });
-        answered ||= ok;
+      const first = await pollChains(chains);
+      let answered = first.answered;
+      if (first.limited.length > 0) {
+        await sleep(deps.retryAfterMs ?? RETRY_AFTER_MS);
+        const retry = await pollChains(first.limited);
+        answered ||= retry.answered;
+        if (retry.limited.length > 0) logger.warn('trending pools rate limited', { chains: retry.limited });
       }
       if (answered) deps.health.beat(SOURCE);
     } finally {
