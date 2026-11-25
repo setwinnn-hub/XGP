@@ -79,7 +79,8 @@ describe('buildTokenAlert', () => {
     const launch = buildTokenAlert(makeEvent()).embeds[0];
     assert.equal(launch?.title, '🔥 $DOOROC · Doomed Rocket');
     assert.equal(launch?.url, 'https://pump.fun/coin/x');
-    assert.ok(launch?.description?.includes('🟣 Solana'));
+    assert.ok(launch?.author?.name.includes('🟣 Solana'));
+    assert.ok(launch?.description?.includes('```GwytBanGx9eS55TpbG3w6veLtT8PKRcs3SXiS7nFpump```'));
     const migration = buildTokenAlert(makeEvent({ kind: 'token_migrated', details: { platform: 'Pump.fun', migratedTo: 'pump-amm' } })).embeds[0];
     assert.ok(migration?.description?.includes('PumpSwap'));
   });

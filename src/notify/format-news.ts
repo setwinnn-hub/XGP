@@ -1,9 +1,7 @@
 import type { RadarEvent } from '../core/types.ts';
 import { explainSignals, type NewsSignals, type NewsTag } from '../news/extract.ts';
 import type { DiscordPayload, EmbedField } from './discord-client.ts';
-import { sanitize } from './format.ts';
-
-const FOOTER = 'Meme Coin Radar · News · ไม่ใช่คำแนะนำการลงทุน';
+import { footer, sanitize } from './format.ts';
 const TAG_LABELS: Readonly<Record<NewsTag, string>> = {
   LISTING: '📈 Listing', LAUNCH: '🚀 เปิดตัว', PARTNERSHIP: '🤝 ความร่วมมือ', WHALE: '🐋 Whale',
   HACK_RUG: '🚨 แฮ็ก/Rug', AIRDROP: '🎁 Airdrop', REGULATION: '⚖️ กฎหมาย',
@@ -54,6 +52,7 @@ export function buildNewsAlert(event: RadarEvent, image: string | null): Discord
   ];
   return {
     embeds: [{
+      author: { name: `📰 BREAKING NEWS${source ? ` · ${source}` : ''}`.slice(0, 256) },
       title: `⚡ ${sanitize(String(d.title ?? 'ข่าว'), 240)}`,
       url: event.txHash,
       description,
@@ -61,7 +60,7 @@ export function buildNewsAlert(event: RadarEvent, image: string | null): Discord
       fields,
       ...(image ? { image: { url: image } } : {}),
       timestamp: new Date(event.detectedAt).toISOString(),
-      footer: { text: FOOTER },
+      footer: footer('News'),
     }],
   };
 }
@@ -83,7 +82,8 @@ function mentionsTrend(event: RadarEvent): DiscordPayload {
   const examples = parseExamples(d.examples);
   return {
     embeds: [{
-      title: `📈 TRENDING: $${symbol} ถูกพูดถึงพร้อมกันหลายสำนัก`,
+      author: { name: '📈 TRENDING · ข่าวหลายสำนัก' },
+      title: `📈 $${symbol} ถูกพูดถึงพร้อมกันหลายสำนัก`,
       description: [
         `**$${symbol}** ถูกกล่าวถึง **${Number(d.mentions)} ครั้ง** ใน ${Number(d.windowMin)} นาที จาก ${sanitize(String(d.sources), 200)}`,
         '',
@@ -93,7 +93,7 @@ function mentionsTrend(event: RadarEvent): DiscordPayload {
       color: 0x06b6d4,
       fields: [],
       timestamp: new Date(event.detectedAt).toISOString(),
-      footer: { text: FOOTER },
+      footer: footer('News'),
     }],
   };
 }
@@ -104,6 +104,7 @@ function coingeckoTrend(event: RadarEvent): DiscordPayload {
   const image = typeof d.image === 'string' && d.image.startsWith('https://') ? d.image : null;
   return {
     embeds: [{
+      author: { name: '🦎 COINGECKO TRENDING' },
       title: `🔥 ติด Trending บน CoinGecko: $${sanitize(event.tokenSymbol ?? '?', 16)} · ${sanitize(event.tokenName ?? '', 60)}`,
       url: event.txHash,
       description: 'เหรียญนี้เพิ่งเข้าอันดับ "ถูกค้นหามากที่สุด" ของ CoinGecko ซึ่งเป็นสัญญาณว่าคนเริ่มสนใจ ไม่ได้แปลว่าราคาจะขึ้น',
@@ -115,7 +116,7 @@ function coingeckoTrend(event: RadarEvent): DiscordPayload {
       ],
       ...(image ? { thumbnail: { url: image } } : {}),
       timestamp: new Date(event.detectedAt).toISOString(),
-      footer: { text: FOOTER },
+      footer: footer('News'),
     }],
   };
 }

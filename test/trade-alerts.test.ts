@@ -48,19 +48,23 @@ describe('trade filters and format', () => {
 
   it('shows who traded what, value, repeat count and whale badge', () => {
     const embed = buildTradeAlert(trade(), { isWhale: true, priorSameSide: 2 }).embeds[0];
-    assert.equal(embed?.title, '🐋 🟢 BUY  $WADDLE · Waddle Penguin');
-    assert.ok(embed?.description?.includes('Alpha Trader'));
-    const text = JSON.stringify(embed?.fields);
-    assert.ok(text.includes('$500'));
+    assert.equal(embed?.title, '🐋 🟢 BUY $WADDLE · $500');
+    assert.ok(embed?.author?.name.includes('SMART MONEY'));
+    assert.ok(embed?.author?.name.includes('Solana'));
+    const text = embed?.description ?? '';
+    assert.ok(text.includes('Alpha Trader'));
     assert.ok(text.includes('2.5 SOL'));
     assert.ok(text.includes('1.25M WADDLE'));
     assert.ok(text.includes('ครั้งที่ 3'));
+    assert.ok(text.includes('```'), 'contract address is a copyable code block');
+    assert.ok(text.includes('📊 Chart'));
   });
 
   it('says when no USD price is known instead of guessing', () => {
-    const text = JSON.stringify(buildTradeAlert(trade({ usdValue: null }), { isWhale: false, priorSameSide: 0 }).embeds[0]?.fields);
-    assert.ok(text.includes('ไม่มีราคา USD'));
-    assert.ok(text.includes('ซื้อครั้งแรก'));
+    const embed = buildTradeAlert(trade({ usdValue: null }), { isWhale: false, priorSameSide: 0 }).embeds[0];
+    assert.equal(embed?.title, '🟢 BUY $WADDLE');
+    assert.ok(embed?.description?.includes('ไม่มีราคา USD'));
+    assert.ok(embed?.description?.includes('ซื้อครั้งแรก'));
   });
 });
 
