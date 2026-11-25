@@ -3,10 +3,11 @@ import { errorMessage, type Logger } from '../core/logger.ts';
 import type { ChainId, RadarEvent } from '../core/types.ts';
 import { sleep } from '../core/util.ts';
 import type { EventRepository } from '../storage/event-repo.ts';
-import { fetchMarket, type MarketSnapshot } from './market.ts';
+import { exitLiquidityUsd, fetchMarket, type MarketSnapshot } from './market.ts';
 import { scoreToken, type TokenScore } from './score.ts';
 import { fetchSecurity, isVerified, type SecurityReport } from './security.ts';
 import { mergeSolanaMint, type SolanaMintFacts } from './solana-mint.ts';
+import type { HolderLookup, Holders } from './holders.ts';
 
 const SOURCE = 'analysis';
 const MAX_PENDING = 300;
@@ -33,6 +34,8 @@ export interface AnalysisDeps {
   readonly fetchSecurity?: typeof fetchSecurity;
   /** Reads a Solana mint's authorities and fees on-chain (works when GoPlus is down or rate limited). */
   readonly fetchSolanaMint?: (mint: string) => Promise<SolanaMintFacts | null>;
+  /** Holder count and top-10 share (GeckoTerminal); never throws. */
+  readonly holders?: HolderLookup;
   readonly now?: () => number;
   /** Called after every analysis (e.g. to start collecting the token's swaps). */
   readonly onAnalysed?: (ref: TokenRef, result: AnalysisResult) => void;
@@ -57,6 +60,7 @@ export interface AnalysisResult {
   readonly security: SecurityReport | null;
   readonly score: TokenScore;
   readonly smartBuyers: number;
+  readonly holders?: Holders | null;
 }
 
 /** EVM addresses are case-insensitive; Solana addresses are not. */
@@ -85,8 +89,11 @@ function analysisEvent(ref: TokenRef, result: AnalysisResult, key: string, alert
       risks: JSON.stringify(result.score.risks),
       smartBuyers: result.smartBuyers,
       priceUsd: m?.priceUsd ?? null,
-      liquidityUsd: m?.liquidityUsd ?? null,
+      // What a seller can exit into, not DexScreener's figure (a fake pool reports millions).
+      liquidityUsd: m ? (exitLiquidityUsd(m) ?? m.liquidityUsd) : null,
       marketCapUsd: m?.marketCapUsd ?? null,
+      holderCount: result.holders?.count ?? null,
+      top10Pct: result.holders?.top10Pct ?? null,
       fdvUsd: m?.fdvUsd ?? null,
       volumeH1Usd: m?.volumeUsd.h1 ?? null,
       buysH1: m?.txnsH1.buys ?? null,
@@ -210,8 +217,9 @@ export class AnalysisEngine {
     const security = mergeSolanaMint(await this.security(ref), await this.solanaMint(ref));
     const smartBuyers = this.deps.repo.countSmartBuyers(ref.chain, ref.token);
     const newsMentions = ref.symbol ? this.deps.repo.countNewsMentions(ref.symbol, this.now() - NEWS_WINDOW_MS) : 0;
-    const score = scoreToken(market, security, { smartMoneyBuyers: smartBuyers, newsMentions, now: this.now(), trending: ref.trending === true });
-    return { market, security, score, smartBuyers };
+    const holders = this.deps.holders ? await this.deps.holders(ref.chain, ref.token) : null;
+    const score = scoreToken(market, security, { smartMoneyBuyers: smartBuyers, newsMentions, now: this.now(), trending: ref.trending === true, holders });
+    return { market, security, score, smartBuyers, holders };
   }
 
   private async run(job: Job): Promise<void> {
@@ -230,7 +238,11 @@ export class AnalysisEngine {
     if (lowRisk && isVerified(result.security) && score.opportunity >= this.deps.config.minOpportunity) {
       this.deps.ingest(SOURCE, analysisEvent(job, result, `alert:opportunity:${id}`, 'opportunity', at));
     }
-    const attention = result.smartBuyers > 0 || score.rawOpportunity >= RISK_ALERT_ATTENTION;
+    // Trending lists bring dozens of risky tokens a day: warn about those only when a followed
+    // wallet bought one or it had an opportunity alert before (it turned risky after we said "good").
+    const alertedBefore = this.deps.repo.hasEvent(`alert:opportunity:${id}`);
+    const busy = !job.trending && score.rawOpportunity >= RISK_ALERT_ATTENTION;
+    const attention = result.smartBuyers > 0 || alertedBefore || busy;
     if (!lowRisk && attention) this.deps.ingest(SOURCE, analysisEvent(job, result, `alert:risk:${id}`, 'risk', at));
   }
 }

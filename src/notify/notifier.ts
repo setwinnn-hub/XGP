@@ -33,6 +33,8 @@ export interface Notifier {
    * the category has no webhook (dry run, logged only).
    */
   gem(category: 'EARLY_GEM' | 'GEM_RISK', payload: DiscordPayload, editMessageId: string | null): Promise<SendOutcome | null>;
+  /** Posts a ready-made message (follow-ups, daily summary) to a category's room. */
+  post(category: AlertCategory, payload: DiscordPayload): Promise<SendOutcome | null>;
 }
 
 /**
@@ -139,16 +141,24 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     dryRunCategories() {
       return ALERT_CATEGORIES.filter((category) => !queues.has(category));
     },
-    async gem(category, payload, editMessageId) {
-      const target = queues.get(category);
-      if (!target) {
-        logger.info('ALERT (dry run: no webhook)', { category, title: payload.embeds[0]?.title ?? '' });
-        return null;
-      }
-      const outcome = editMessageId ? await target.queue.edit(editMessageId, payload) : await target.queue.send(payload);
-      if (outcome.status === 'sent') logger.info(editMessageId ? 'ALERT edited' : 'ALERT sent', { category, title: payload.embeds[0]?.title ?? '' });
-      else logger.error('ALERT not delivered', { category, status: outcome.status, error: outcome.error });
-      return outcome;
+    post(category, payload) {
+      return deliver(category, payload, null);
+    },
+    gem(category, payload, editMessageId) {
+      return deliver(category, payload, editMessageId);
     },
   };
+
+  /** Sends (or edits) a ready-made payload in a category's room; null when it has no webhook. */
+  async function deliver(category: AlertCategory, payload: DiscordPayload, editMessageId: string | null): Promise<SendOutcome | null> {
+    const target = queues.get(category);
+    if (!target) {
+      logger.info('ALERT (dry run: no webhook)', { category, title: payload.embeds[0]?.title ?? '' });
+      return null;
+    }
+    const outcome = editMessageId ? await target.queue.edit(editMessageId, payload) : await target.queue.send(payload);
+    if (outcome.status === 'sent') logger.info(editMessageId ? 'ALERT edited' : 'ALERT sent', { category, title: payload.embeds[0]?.title ?? '' });
+    else logger.error('ALERT not delivered', { category, status: outcome.status, error: outcome.error });
+    return outcome;
+  }
 }

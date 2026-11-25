@@ -25,6 +25,8 @@ export interface EventRepository {
   insert(event: RadarEvent): boolean;
   recordDelivery(key: string, update: DeliveryUpdate): void;
   setChainTime(key: string, chainMs: number): void;
+  /** True when an event with this key was stored. */
+  hasEvent(key: string): boolean;
   findTokenName(chain: string, tokenAddress: string): { name: string | null; symbol: string | null } | null;
   latencyRows(sinceMs: number): readonly LatencyRow[];
   /** How many earlier trades of this side the wallet made in this token (for "bought again" badges). */
@@ -55,6 +57,7 @@ export function createEventRepository(db: DatabaseSync): EventRepository {
   const deliveryStmt = db.prepare(
     'UPDATE events SET delivery = ?, t_processed = ?, t_discord = ?, delivery_note = ? WHERE event_key = ?',
   );
+  const hasEventStmt = db.prepare('SELECT 1 FROM events WHERE event_key = ?');
   const chainTimeStmt = db.prepare('UPDATE events SET t_chain = ? WHERE event_key = ?');
   const nameStmt = db.prepare(`
     SELECT token_name, token_symbol FROM events
@@ -94,6 +97,9 @@ export function createEventRepository(db: DatabaseSync): EventRepository {
     },
     setChainTime(key, chainMs) {
       chainTimeStmt.run(chainMs, key);
+    },
+    hasEvent(key) {
+      return hasEventStmt.get(key) !== undefined;
     },
     findTokenName(chain, tokenAddress) {
       const row = nameStmt.get(chain, tokenAddress);

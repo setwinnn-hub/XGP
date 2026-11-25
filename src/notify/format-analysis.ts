@@ -29,6 +29,11 @@ function pct(value: unknown): string {
   return typeof value === 'number' ? `${value >= 0 ? '🟢 +' : '🔴 '}${value.toFixed(1)}%` : '-';
 }
 
+function holdersText(count: unknown, top10: unknown): string {
+  if (typeof count !== 'number') return '-';
+  return `${count.toLocaleString('en-US')}${typeof top10 === 'number' ? `\nTop10 ${top10.toFixed(1)}%` : ''}`;
+}
+
 /** Risk text without its "[LEVEL]" prefix (the level is shown once, above). */
 function plain(reason: string): string {
   return reason.replace(/^\[(LOW|MEDIUM|HIGH|CRITICAL)\]\s*/, '');
@@ -59,7 +64,7 @@ export function buildAnalysisAlert(event: RadarEvent): DiscordPayload {
     { name: '📈 Vol 1 ชม.', value: usd(d.volumeH1Usd), inline: true },
     { name: '🔁 ซื้อ / ขาย 1 ชม.', value: `${String(d.buysH1 ?? '-')} / ${String(d.sellsH1 ?? '-')}`, inline: true },
     { name: '⏱️ ราคา 1 ชม.', value: pct(d.changeH1Pct), inline: true },
-    { name: '​', value: '​', inline: true },
+    { name: '👥 ผู้ถือ', value: holdersText(d.holderCount, d.top10Pct), inline: true },
   ];
   const image = typeof d.image === 'string' && d.image.startsWith('https://') ? d.image : null;
   return {

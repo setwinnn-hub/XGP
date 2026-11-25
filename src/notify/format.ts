@@ -12,6 +12,12 @@ const CHAIN_BADGE: Readonly<Record<string, string>> = {
   bsc: '🟡',
 };
 
+/** DexScreener URL slug per chain (EVM chains carry their own). */
+export const CHAIN_SLUG: Readonly<Record<string, string>> = {
+  solana: 'solana',
+  ...Object.fromEntries(EVM_CHAINS.map((c) => [c.id, c.dexscreenerSlug])),
+};
+
 /** Friendly names for raw venue ids coming from data sources. */
 const VENUE_NAMES: Readonly<Record<string, string>> = {
   'pump-amm': 'PumpSwap',

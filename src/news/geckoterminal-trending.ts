@@ -16,7 +16,7 @@ const BUCKET_MS = 6 * 60 * 60_000;
 const TIMEOUT_MS = 15_000;
 
 /** GeckoTerminal network ids for the chains the radar knows. */
-const NETWORK: Readonly<Partial<Record<ChainId, string>>> = {
+export const GECKOTERMINAL_NETWORK: Readonly<Partial<Record<ChainId, string>>> = {
   solana: 'solana', ethereum: 'eth', base: 'base', bsc: 'bsc',
   arbitrum: 'arbitrum', polygon: 'polygon_pos', optimism: 'optimism', avalanche: 'avax',
 };
@@ -75,7 +75,7 @@ export function parseTrendingPools(body: unknown, _chain: ChainId): TrendingPool
 }
 
 export function trendingPoolEvent(pool: TrendingPool, chain: ChainId, at: number): RadarEvent {
-  const network = NETWORK[chain] ?? chain;
+  const network = GECKOTERMINAL_NETWORK[chain] ?? chain;
   const url = `https://www.geckoterminal.com/${network}/pools/${pool.pool}`;
   const id = chain === 'solana' ? pool.token : pool.token.toLowerCase();
   return {
@@ -118,13 +118,13 @@ type ChainResult = 'ok' | 'empty' | 'rate-limited' | 'failed';
  */
 export function createGeckoTerminalTrendingAdapter(deps: GeckoTerminalTrendingDeps): Adapter & { pollOnce(): Promise<void> } {
   const logger = deps.logger.child({ source: SOURCE });
-  const chains = deps.chains.filter((c) => NETWORK[c] !== undefined);
+  const chains = deps.chains.filter((c) => GECKOTERMINAL_NETWORK[c] !== undefined);
   let timer: NodeJS.Timeout | null = null;
   let running = false;
   deps.health.register(SOURCE, STALE_AFTER_MS);
 
   const pollChain = async (chain: ChainId): Promise<ChainResult> => {
-    const url = `${API}/${NETWORK[chain]}/trending_pools?page=1&include=base_token`;
+    const url = `${API}/${GECKOTERMINAL_NETWORK[chain]}/trending_pools?page=1&include=base_token`;
     const response = await (deps.fetchFn ?? fetch)(url, { headers: { accept: 'application/json' }, signal: AbortSignal.timeout(TIMEOUT_MS) });
     if (response.status === 429) return 'rate-limited';
     if (!response.ok) {

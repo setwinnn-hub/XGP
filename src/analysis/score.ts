@@ -1,4 +1,5 @@
 import { exitLiquidityUsd, type MarketSnapshot } from './market.ts';
+import type { Holders } from './holders.ts';
 import { isVerified, type SecurityReport } from './security.ts';
 
 export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
@@ -11,6 +12,23 @@ export interface ScoreContext {
   readonly now: number;
   /** The token is on GeckoTerminal's trending list (real trades and volume). */
   readonly trending?: boolean;
+  /** Holder base from GeckoTerminal; top-10 share may include pools and exchanges. */
+  readonly holders?: Holders | null;
+}
+
+/** GeckoTerminal's top 10 can include the pool and exchanges, so these limits sit above GoPlus's 50%. */
+const TOP10_HIGH_PCT = 80;
+const TOP10_MEDIUM_PCT = 60;
+const FEW_HOLDERS = 100;
+const WIDE_HOLDERS = 1_000;
+const SPREAD_TOP10_PCT = 40;
+
+function holderRisks(h: Holders): RiskFinding[] {
+  const out: RiskFinding[] = [];
+  if (h.top10Pct !== null && h.top10Pct >= TOP10_HIGH_PCT) out.push({ level: 'HIGH', text: `10 กระเป๋าแรกถือ ${h.top10Pct.toFixed(0)}% (กระจุกตัวมาก เสี่ยงโดนเทขาย)` });
+  else if (h.top10Pct !== null && h.top10Pct >= TOP10_MEDIUM_PCT) out.push({ level: 'MEDIUM', text: `10 กระเป๋าแรกถือ ${h.top10Pct.toFixed(0)}%` });
+  if (h.count < FEW_HOLDERS) out.push({ level: 'MEDIUM', text: `ผู้ถือเพียง ${h.count.toLocaleString('en-US')} ราย` });
+  return out;
 }
 
 export interface TokenScore {
@@ -69,6 +87,10 @@ function contextFindings(c: ScoreContext, m: MarketSnapshot | null): Finding[] {
   if (c.smartMoneyBuyers >= 2) out.push({ points: 20, text: `Wallet ที่ติดตาม ${c.smartMoneyBuyers} ตัวซื้อเหรียญนี้` });
   else if (c.smartMoneyBuyers === 1) out.push({ points: 10, text: 'Wallet ที่ติดตามซื้อเหรียญนี้' });
   if (c.trending) out.push({ points: 10, text: 'ติด Trending บน GeckoTerminal' });
+  const h = c.holders;
+  if (h && h.count >= WIDE_HOLDERS && h.top10Pct !== null && h.top10Pct < SPREAD_TOP10_PCT) {
+    out.push({ points: 5, text: `ผู้ถือ ${h.count.toLocaleString('en-US')} ราย กระจายตัวดี (10 อันดับแรก ${h.top10Pct.toFixed(0)}%)` });
+  }
   if (c.newsMentions > 0) out.push({ points: Math.min(15, c.newsMentions * 5), text: `ถูกพูดถึงในข่าว ${c.newsMentions} ครั้ง` });
   if (m?.pairCreatedAt && c.now - m.pairCreatedAt < 24 * 3_600_000) out.push({ points: 5, text: 'ยังเป็นเหรียญใหม่ (อายุไม่ถึง 24 ชม.)' });
   return out;
@@ -131,7 +153,11 @@ function marketRisks(m: MarketSnapshot): RiskFinding[] {
  */
 export function scoreToken(market: MarketSnapshot | null, security: SecurityReport | null, context: ScoreContext): TokenScore {
   const findings = [...(market ? marketFindings(market) : []), ...contextFindings(context, market)];
-  const risks = [...(security ? securityRisks(security) : []), ...(market ? marketRisks(market) : [])];
+  const risks = [
+    ...(security ? securityRisks(security) : []),
+    ...(market ? marketRisks(market) : []),
+    ...(context.holders ? holderRisks(context.holders) : []),
+  ];
   if (!market) risks.push({ level: 'MEDIUM', text: 'ยังไม่มีข้อมูลตลาดบน DexScreener' });
   if (!security) risks.push({ level: 'MEDIUM', text: 'ตรวจความปลอดภัยของ contract ไม่ได้ (GoPlus ไม่มีข้อมูล)' });
   else if (!isVerified(security)) risks.push({ level: 'MEDIUM', text: 'GoPlus ยังไม่มีผลตรวจความปลอดภัยของเหรียญนี้ (เหรียญใหม่มาก)' });

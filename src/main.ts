@@ -17,6 +17,9 @@ import { createNotifier, type Notifier } from './notify/notifier.ts';
 import { decideAlert } from './notify/filters.ts';
 import { AnalysisEngine, tokenToAnalyse } from './analysis/analysis-engine.ts';
 import { fetchSolanaMint } from './analysis/solana-mint.ts';
+import { createAlertTracker } from './analysis/alert-tracker.ts';
+import { createHolderLookup } from './analysis/holders.ts';
+import { fetchMarket } from './analysis/market.ts';
 import { createCoinGeckoTrendingAdapter } from './news/coingecko-trending.ts';
 import { createGeckoTerminalTrendingAdapter } from './news/geckoterminal-trending.ts';
 import { createNewsAdapter } from './news/news-adapter.ts';
@@ -194,6 +197,7 @@ function main(): void {
     ? new AnalysisEngine({
         config: config.analysis, repo, ingest, logger,
         fetchSolanaMint: (mint) => fetchSolanaMint(config.solanaRpcUrl, mint),
+        holders: createHolderLookup(),
         onAnalysed: (ref, result) => {
           const entry = config.gemSwapChains.includes(ref.chain) ? watchFor(ref, result.market, Date.now()) : null;
           if (entry && swapStore.watch(entry)) logger.info('gem watch started', { chain: entry.chain, token: entry.token, poolKind: entry.poolKind });
@@ -215,9 +219,15 @@ function main(): void {
     if (Math.random() < config.latencySampleRate) resolveSolanaTime(event.key, event.txHash);
   });
 
+  // Follow-ups and the 09:00 summary go to the room where opportunity alerts are posted.
+  const tracker = config.analysis.enabled
+    ? createAlertTracker({ db, logger, fetchMarket, send: (payload) => notifier.post('HIGH_OPPORTUNITY', payload) })
+    : null;
+
   prices.start();
   registry.start(WALLET_REFRESH_MS);
   analysis?.start();
+  tracker?.start();
   gemMonitor.start();
   const adapters = buildAdapters({ config, logger, health, repo, ingest, registry, prices, swapStore });
   const sweep = wireHealth(health, notifier, logger);
@@ -238,6 +248,7 @@ function main(): void {
     registry.stop();
     prices.stop();
     analysis?.stop();
+    tracker?.stop();
     gemMonitor.stop();
     for (const adapter of adapters) adapter.stop();
     // Give in-flight alerts a moment to record their delivery before the database closes.

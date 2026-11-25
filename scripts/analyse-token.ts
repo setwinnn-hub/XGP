@@ -5,6 +5,7 @@
  */
 import { AnalysisEngine } from '../src/analysis/analysis-engine.ts';
 import { fetchSolanaMint } from '../src/analysis/solana-mint.ts';
+import { createHolderLookup } from '../src/analysis/holders.ts';
 import { loadConfig } from '../src/config.ts';
 import { silentLogger } from '../src/core/logger.ts';
 import { openDatabase } from '../src/storage/db.ts';
@@ -19,12 +20,14 @@ async function main(): Promise<void> {
   const engine = new AnalysisEngine({
     config: config.analysis, repo, ingest: () => false, logger: silentLogger,
     fetchSolanaMint: (mint) => fetchSolanaMint(config.solanaRpcUrl, mint),
+    holders: createHolderLookup(),
   });
-  const { market, score, smartBuyers } = await engine.analyse({ chain, token, symbol: null, name: null });
+  const { market, score, smartBuyers, holders } = await engine.analyse({ chain, token, symbol: null, name: null });
   const m = market;
   process.stdout.write(`\n${chain} ${token}\n`);
   process.stdout.write(m ? `DEX ${m.dexId} | liquidity ${m.liquidityUsd ?? '-'} | mcap ${m.marketCapUsd ?? '-'} | vol1h ${m.volumeUsd.h1} | buys/sells 1h ${m.txnsH1.buys}/${m.txnsH1.sells} | 1h ${m.priceChangePct.h1 ?? '-'}%\n` : 'No DexScreener market data\n');
   process.stdout.write(`Followed wallets that bought: ${smartBuyers}\n`);
+  process.stdout.write(`Holders: ${holders ? `${holders.count} | top10 ${holders.top10Pct ?? '-'}%` : 'no data'}\n`);
   process.stdout.write(`\nOPPORTUNITY ${score.opportunity}/100 (raw ${score.rawOpportunity})   RISK ${score.risk}\n`);
   for (const p of score.positives) process.stdout.write(`  + ${p}\n`);
   for (const r of score.risks) process.stdout.write(`  ! ${r}\n`);
