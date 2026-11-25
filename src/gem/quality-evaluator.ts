@@ -71,7 +71,12 @@ export async function evaluateQuality(q: QualityDeps, ctx: QualityContext, logge
       dexTxnsH1: market ? market.txnsH1.buys + market.txnsH1.sells : null,
     },
   });
-  const security = assessSecurity({ chain, poolKind: watch.poolKind, goplus: sources.goplus, honeypot: sources.honeypot, liquidityFlags: liquidity.flags });
+  const fresh = assessSecurity({ chain, poolKind: watch.poolKind, goplus: sources.goplus, honeypot: sources.honeypot, liquidityFlags: liquidity.flags });
+  // After a restart the in-memory source cache is empty: until this token's turn to be looked up,
+  // carry the last stored verdict instead of a blanket UNKNOWN (a liquidity drop still overrides it).
+  const stored = q.store.latestSecurity(chain, watch.token);
+  const pending = sources.at === null && stored !== null && asOf - stored.at < SECURITY_RECORD_MS && fresh.level !== 'CRITICAL';
+  const security = pending && stored ? stored.assessment : fresh;
 
   let recorded = 0;
   const lastLiquidity = q.store.latestLiquidity(chain, watch.token);
@@ -82,8 +87,8 @@ export async function evaluateQuality(q: QualityDeps, ctx: QualityContext, logge
   if (liquidity.flags.includes('LIQUIDITY_DROP') && !lastLiquidity?.report.flags.includes('LIQUIDITY_DROP')) {
     logger.warn('gem liquidity drop', { chain, token: watch.token, symbol: watch.symbol, changePct: liquidity.changeFromPeak60mPct });
   }
-  const lastSecurity = q.store.latestSecurity(chain, watch.token);
-  if (!lastSecurity || lastSecurity.level !== security.level || sources.fetched || asOf - lastSecurity.at >= SECURITY_RECORD_MS) {
+  const lastSecurity = stored;
+  if (!pending && (!lastSecurity || lastSecurity.level !== security.level || sources.fetched || asOf - lastSecurity.at >= SECURITY_RECORD_MS)) {
     q.store.recordSecurity(chain, watch.token, asOf, security);
     recorded += 1;
   }

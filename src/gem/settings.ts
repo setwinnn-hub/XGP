@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite';
+import { DEFAULT_THRESHOLDS, DEFAULT_WEIGHTS, SCORE_CATEGORIES, type ScoreThresholds, type ScoreWeights } from './gem-score.ts';
 
 /** User-adjustable Early Gem settings (edited from the Dashboard; stored in the DB). */
 export interface GemSettings {
@@ -14,6 +15,9 @@ export interface GemSettings {
   readonly minBuyTransactions: number;
   readonly minUniqueBuyers: number;
   readonly minIndependentWallets: number;
+  /** Early Gem Score category weights (any non-negative numbers; the score is scaled to 100). */
+  readonly weights: ScoreWeights;
+  readonly thresholds: ScoreThresholds;
 }
 
 /** Market cap defaults confirmed by the user on 2026-11-25 (Pump.fun's floor is ~66,000 THB). */
@@ -26,12 +30,33 @@ export const DEFAULT_GEM_SETTINGS: GemSettings = {
   minBuyTransactions: 10,
   minUniqueBuyers: 8,
   minIndependentWallets: 6,
+  weights: DEFAULT_WEIGHTS,
+  thresholds: DEFAULT_THRESHOLDS,
 };
 
 const KEY = 'gem';
 
 function validNumber(value: unknown, fallback: number, min: number, max: number): number {
   return typeof value === 'number' && Number.isFinite(value) && value >= min && value <= max ? value : fallback;
+}
+
+function normalizeWeights(raw: unknown): ScoreWeights {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const weights = Object.fromEntries(SCORE_CATEGORIES.map((c) => [c, validNumber(r[c], DEFAULT_WEIGHTS[c], 0, 1000)])) as Record<string, number>;
+  // All-zero weights would make every score 0/0.
+  return SCORE_CATEGORIES.some((c) => (weights[c] ?? 0) > 0) ? (weights as ScoreWeights) : DEFAULT_WEIGHTS;
+}
+
+function normalizeThresholds(raw: unknown): ScoreThresholds {
+  const r = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>;
+  const d = DEFAULT_THRESHOLDS;
+  const high = validNumber(r.highPotentialScore, d.highPotentialScore, 0, 100);
+  const watch = validNumber(r.earlyWatchScore, d.earlyWatchScore, 0, 100);
+  return {
+    highPotentialScore: Math.max(high, watch),
+    earlyWatchScore: Math.min(high, watch),
+    highPotentialMinConfidence: validNumber(r.highPotentialMinConfidence, d.highPotentialMinConfidence, 0, 100),
+  };
 }
 
 /** Merges stored values over the defaults; invalid stored values fall back to defaults. */
@@ -49,6 +74,8 @@ export function normalizeSettings(raw: unknown): GemSettings {
     minBuyTransactions: validNumber(r.minBuyTransactions, d.minBuyTransactions, 0, 1e6),
     minUniqueBuyers: validNumber(r.minUniqueBuyers, d.minUniqueBuyers, 0, 1e6),
     minIndependentWallets: validNumber(r.minIndependentWallets, d.minIndependentWallets, 0, 1e6),
+    weights: normalizeWeights(r.weights),
+    thresholds: normalizeThresholds(r.thresholds),
   };
 }
 

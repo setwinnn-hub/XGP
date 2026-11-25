@@ -24,6 +24,7 @@
     "mcap": "node --env-file-if-exists=.env scripts/mcap.ts",
     "buyers": "node --env-file-if-exists=.env scripts/buyers.ts",
     "tokencheck": "node --env-file-if-exists=.env scripts/token-check.ts",
+    "gems": "node --env-file-if-exists=.env scripts/gems.ts",
     "find:wallets": "node --env-file-if-exists=.env scripts/find-active-wallets.ts"
   },
   "dependencies": {

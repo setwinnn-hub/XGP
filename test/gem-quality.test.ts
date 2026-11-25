@@ -240,3 +240,28 @@ describe('gem monitor with liquidity and security', () => {
     }
   });
 });
+
+describe('after a restart', () => {
+  it('keeps the last stored security verdict until the token is looked up again', async () => {
+    const { openDatabase } = await import('../src/storage/db.ts');
+    const { createQualityStore } = await import('../src/gem/quality-store.ts');
+    const { evaluateQuality } = await import('../src/gem/quality-evaluator.ts');
+    const { detectAccumulation } = await import('../src/gem/accumulation.ts');
+    const store = createQualityStore(openDatabase(':memory:'));
+    const token = '0x00000000000000000000000000000000000000aa';
+    const clean = assessSecurity({ chain: 'bsc', poolKind: 'pair', goplus: parseSecurity({ is_honeypot: '0', sell_tax: '0', owner_change_balance: '0', is_mintable: '0' }, false), honeypot: null, liquidityFlags: [] });
+    store.recordSecurity('bsc', token, NOW - 5 * 60_000, clean);
+    const deps = {
+      store, settings: () => DEFAULT_GEM_SETTINGS, thbPerUsd: () => THB,
+      security: createSecurityCache({ logger: silentLogger, now: () => NOW, fetchSecurity: async () => null, fetchHoneypot: async () => null }),
+    };
+    const ctx = {
+      chain: 'bsc' as const, market: market(), reserves: null, asOf: NOW, allowSecurityFetch: false,
+      watch: { chain: 'bsc', token, pool: '0xpair', poolKind: 'pair' as const, symbol: null, reason: 't', addedAt: NOW - 7_200_000, expiresAt: NOW + 3_600_000 },
+      accumulation: detectAccumulation({ swaps: [], now: NOW, coverageSince: NOW - 7_200_000, smartWallets: new Set(), price: null }),
+    };
+    const r = await evaluateQuality(deps, ctx, silentLogger);
+    assert.equal(r.security.level, clean.level, 'not a blanket UNKNOWN');
+    assert.equal(store.latestSecurity('bsc', token)?.at, NOW - 5 * 60_000, 'nothing new recorded while pending');
+  });
+});

@@ -331,6 +331,43 @@
 - ไม่ได้ตรวจ: Related Deployer Wallets, Known Malicious Wallet Exposure, Insider Wallet Concentration (ไม่มีแหล่งข้อมูลฟรี)
 - Liquidity Concentration ข้ามหลาย pool ยังไม่ได้คิด (GoPlus มีรายชื่อ pool อยู่แล้ว ทำต่อได้)
 
+### Stage 9: Early Gem Score + Confidence + Hard Gate ✅
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `src/gem/gem-score.ts` (ใหม่) | ให้คะแนน 0–100 ตาม 10 หมวดในน้ำหนักเริ่มต้นของ spec (20/20/15/10/10/5/5/5/5/5) **หมวดที่ไม่มีข้อมูลได้ 0 คะแนนเสมอ** และ Data Confidence = สัดส่วนน้ำหนักที่มีหลักฐานจริง แบ่งเป็น HIGH_POTENTIAL / EARLY_WATCH / LOW_ACTIVITY / HIGH_RISK / REJECTED โดยมี **hard gate ที่ตรวจก่อนและแยกจากคะแนน** (คะแนนสูงแค่ไหนก็ผ่าน gate ไม่ได้) |
+| `src/gem/score-evaluator.ts` (ใหม่) | ต่อผลจาก Stage 5–8 เข้าด้วยกัน อ่าน supply บน chain เพื่อตรวจ market cap (cache 30 นาที ไม่เกิน 3 เหรียญต่อรอบ) บันทึกเมื่อประเภทเปลี่ยน คะแนนเปลี่ยน ≥ 5 หรือทุก 15 นาที และ log `gem classification` เมื่อเข้าหรือออกจาก HIGH_POTENTIAL/EARLY_WATCH |
+| `src/gem/score-store.ts` (ใหม่) | ตาราง `gem_scores` เก็บผลทั้งหมด (คะแนนรายหมวด, gate, market cap, security) เป็นประวัติ ไม่เขียนทับ |
+| `src/gem/settings.ts` | ผู้ใช้ปรับน้ำหนักและเกณฑ์ได้ (HIGH_POTENTIAL ≥ 70 และ confidence ≥ 60, EARLY_WATCH ≥ 40) ถ้าค่าที่บันทึกไม่ถูกต้องจะกลับไปใช้ค่าเริ่มต้น |
+| `src/gem/quality-evaluator.ts` | **แก้บั๊กที่เจอระหว่างรันจริง:** หลังรีสตาร์ท cache ของ GoPlus ว่าง ทำให้ทุกเหรียญกลายเป็น UNKNOWN ชั่วคราว ตอนนี้ใช้ผลที่บันทึกล่าสุด (ถ้าไม่เกิน 30 นาที) จนกว่าจะถึงคิวตรวจใหม่ |
+| `src/gem/gem-monitor.ts`, `src/main.ts` | เพิ่มขั้นให้คะแนนต่อจาก liquidity/security ในรอบทุก 1 นาที |
+| `scripts/gems.ts` (ใหม่) | `npm run gems` แสดงทุกเหรียญแยกตามประเภท, `npm run gems -- <chain> <token>` แสดงคะแนนรายหมวด, gate และประวัติ |
+| `test/gem-score.test.ts` (ใหม่) | 8 tests ทุก fixture สร้างผ่านฟังก์ชันจริงของ Stage 5–8 ไม่ได้ใส่ผลลัพธ์ปลอมเข้าไปตรงๆ |
+
+**กฎการจัดประเภท (ตามลำดับ):**
+1. **REJECTED:** security CRITICAL, สภาพคล่องถูกถอน, ราคาขึ้นไปแล้ว หรือ market cap เกินช่วง
+2. **HIGH_RISK:** security HIGH_RISK, การซื้อแบบประสานงาน (SUSPICIOUS) หรือสภาพคล่องไม่พอ
+3. **LOW_ACTIVITY:** การซื้อขายยังไม่ถึงเกณฑ์ หรือข้อมูลยังไม่พอ
+4. **HIGH_POTENTIAL:** คะแนน ≥ 70, confidence ≥ 60%, market cap **VERIFIED** และตรวจ security หลักได้
+5. **EARLY_WATCH:** คะแนน ≥ 40 พร้อมบอกว่ายังขาดอะไรถึงจะเป็น HIGH_POTENTIAL
+6. ที่เหลือ = LOW_ACTIVITY
+
+**ผลทดสอบจริง (25 พ.ย. 20:50–21:05 UTC, 31 เหรียญที่เฝ้า):**
+- ประเภท: REJECTED 14, HIGH_RISK 14, LOW_ACTIVITY 3, **ยังไม่มี HIGH_POTENTIAL หรือ EARLY_WATCH**
+- เหตุผลหลักของ REJECTED: market cap เกินช่วง ฿66k–500k (เหรียญที่ระบบเจอตอนนี้มีมูลค่า ฿4M–65M)
+- ตัวอย่าง `0xc36C…7777` (BSC):
+  - คะแนน 40.1/100, confidence 90%, market cap ฿3.95M (VERIFIED)
+  - ซื้อขายคึกคัก (ACCUMULATING, 57 ผู้ซื้ออิสระใน 15 นาที) security NO_ISSUES_FOUND
+  - แต่**ถูก REJECTED เพราะ market cap เกินช่วง** แสดงว่า hard gate ทำงาน
+- หลังแก้บั๊กรีสตาร์ท: 25 จาก 31 เหรียญมีคำตอบจาก GoPlus แล้ว (อีก 6 เหรียญรอคิว หรือ GoPlus ไม่มีข้อมูล)
+- **Regression:** test ผ่าน 208/208, typecheck ผ่าน, ไม่มี warning หรือ error จาก `gem:*`
+
+**ข้อจำกัด:**
+- Holder Growth (5 คะแนน) ยังไม่มีแหล่งข้อมูลฟรี confidence จึงสูงสุดที่ 95%
+- Social Momentum ใช้ได้แค่ข่าวจาก RSS เดิม (ไม่มี X/Telegram)
+- Smart Money ต้องมีกระเป๋าที่ติดตามบน chain นั้น ถ้าไม่มีจะเป็น "ไม่มีข้อมูล" ไม่ใช่ 0 คะแนนแบบมีหลักฐาน
+- น้ำหนักและเกณฑ์ยังเป็นค่าตาม spec **ยังไม่ได้ปรับด้วย backtest** (Stage 12) คะแนนสูงไม่ได้แปลว่าราคาจะขึ้น
+- **ข้อสังเกต:** เหรียญที่ระบบเจอส่วนใหญ่มีมูลค่าสูงกว่าช่วง ฿66k–500k มาก เพราะตอนนี้เฝ้าเฉพาะเหรียญที่ถูกวิเคราะห์แล้ว ถ้าอยากได้เหรียญเล็กกว่านี้ อาจต้องเฝ้าตั้งแต่ตอนสร้าง pair (ทำใน Stage 10 ได้)
+
 ## 6. การตัดสินใจ (ยืนยันแล้ว 25 พ.ย. 2026)
 1. **ช่วง market cap เริ่มต้น: 66,000–500,000 บาท** (≈ $2k–$15k) ปรับได้ใน Dashboard ภายหลัง
 2. **ทำ EVM (ETH/Base/BNB) ก่อน** ส่วน Solana จะเพิ่มเมื่อมี Helius key ระหว่างนี้ Solana ใช้ข้อมูลจาก DexScreener ได้อย่างเดียว และติดป้าย LOW CONFIDENCE

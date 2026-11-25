@@ -7,6 +7,7 @@ import { tokenCoverageSince } from './swap-collector.ts';
 import type { SwapStore, WatchEntry } from './swap-store.ts';
 import type { PairReserves } from './pool-reserves.ts';
 import { evaluateQuality, type QualityDeps } from './quality-evaluator.ts';
+import { createScoreEvaluator, type ScoreDeps } from './score-evaluator.ts';
 
 const INTERVAL_MS = 60_000;
 /** Enough history for the 60-minute window and the one before the 5-minute window. */
@@ -27,6 +28,8 @@ export interface GemMonitorDeps {
   readonly fetchMarkets?: typeof fetchMarkets;
   /** Liquidity + security (Stage 8). Absent = accumulation only. */
   readonly quality?: QualityDeps;
+  /** Early Gem Score + classification (Stage 9); needs `quality`. */
+  readonly scoring?: ScoreDeps;
   readonly now?: () => number;
 }
 
@@ -46,6 +49,7 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
   const logger = deps.logger.child({ source: 'gem:monitor' });
   const now = deps.now ?? Date.now;
   let timer: NodeJS.Timeout | null = null;
+  const scorer = deps.scoring ? createScoreEvaluator(deps.scoring, logger) : null;
   let running = false;
 
   const markets = async (chain: ChainId, watches: readonly WatchEntry[]): Promise<ReadonlyMap<string, MarketSnapshot>> => {
@@ -97,6 +101,7 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
       // Judge as of the collector's last scan, so a stalled collector never looks like "no buyers".
       const asOf = Math.min(now(), cursor.updatedAt);
       let securityBudget = SECURITY_FETCHES_PER_PASS;
+      let supplyBudget = SECURITY_FETCHES_PER_PASS;
       for (const watch of watches) {
         try {
           const market = byToken.get(watch.token.toLowerCase()) ?? null;
@@ -109,6 +114,13 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
           }, logger);
           if (quality.securityFetched) securityBudget -= 1;
           recorded += quality.recorded;
+          if (!scorer) continue;
+          const scored = await scorer.evaluate({
+            chain, watch, market, asOf, accumulation: result.report, liquidity: quality.liquidity, security: quality.security,
+            allowSupplyFetch: supplyBudget > 0,
+          });
+          if (scored.supplyFetched) supplyBudget -= 1;
+          recorded += scored.recorded;
         } catch (error: unknown) {
           logger.warn('gem evaluation failed', { chain, token: watch.token, error: errorMessage(error) });
         }

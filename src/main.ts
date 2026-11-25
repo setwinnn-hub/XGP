@@ -30,6 +30,8 @@ import { fetchPairReserves } from './gem/pool-reserves.ts';
 import { createQualityStore } from './gem/quality-store.ts';
 import { createSecurityCache } from './gem/security-cache.ts';
 import { createSettingsRepository } from './gem/settings.ts';
+import { createScoreStore } from './gem/score-store.ts';
+import { fetchOnchainSupply } from './gem/supply.ts';
 import type { EvmChainConfig } from './chains/evm/chains.ts';
 import { explorerUrls, toTradeEvent, type WalletTrade } from './trades/trade-event.ts';
 import { createTradeSink } from './trades/trade-sink.ts';
@@ -140,18 +142,27 @@ function main(): void {
   const registry = new WalletRegistry(createWalletRepository(db), logger);
   const prices = createPriceBook(logger);
   const swapStore = createSwapStore(db);
+  const gemSettings = createSettingsRepository(db);
   const gemMonitor = createGemMonitor({
     chains: config.gemSwapChains.filter(isChainId), swaps: swapStore, signals: createSignalStore(db), logger,
     smartWallets: (chain) => new Set(registry.wallets(chain).keys()),
     quality: {
       store: createQualityStore(db),
       security: createSecurityCache({ logger }),
-      settings: (() => { const repo = createSettingsRepository(db); return () => repo.get(); })(),
+      settings: () => gemSettings.get(),
       thbPerUsd: () => prices.fxRate()?.thbPerUsd ?? null,
       reserves: async (chain, requests) => {
         const evm = findEvmChain(chain);
         return evm ? fetchPairReserves(gemClient(evm), requests) : new Map();
       },
+    },
+    scoring: {
+      store: createScoreStore(db),
+      settings: () => gemSettings.get(),
+      fx: () => prices.fxRate(),
+      fetchSupply: (chain, token) => fetchOnchainSupply(chain, token, config.solanaRpcUrl),
+      trackedWallets: (chain) => registry.wallets(chain).size,
+      newsMentions: (symbol) => (symbol && /^[A-Za-z0-9]{3,12}$/.test(symbol) ? repo.countNewsMentions(symbol, Date.now() - 24 * 3_600_000) : null),
     },
   });
 
