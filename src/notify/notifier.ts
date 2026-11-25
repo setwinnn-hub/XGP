@@ -90,6 +90,16 @@ export function createNotifier(deps: NotifierDeps): Notifier {
     return found ? { ...event, tokenName: found.name, tokenSymbol: found.symbol } : event;
   };
 
+  /**
+   * When the coin (or its pool) was created: a launch or new pair is created as we see it; an
+   * analysis carries DexScreener's pool time; graduations and trades use the stored launch.
+   */
+  const createdAt = (event: RadarEvent): number | null => {
+    if (event.kind === 'token_launched' || event.kind === 'pair_created') return event.detectedAt;
+    if (event.kind === 'analysis' && typeof event.details.pairCreatedAt === 'number') return event.details.pairCreatedAt;
+    return deps.repo.tokenCreatedAt(event.chain, event.tokenAddress);
+  };
+
   /** Adds the picture card to the first embed; on any failure or slowness the alert goes without it. */
   const withCard = async (event: RadarEvent, payload: DiscordPayload, card: CardData): Promise<DiscordPayload> => {
     if (!deps.renderCard) return payload;
@@ -100,11 +110,14 @@ export function createNotifier(deps: NotifierDeps): Notifier {
       // The card carries everything else; only what a picture cannot do stays as text:
       // the live "x minutes ago", the contract address to copy and the links to click.
       const unix = Math.floor(event.detectedAt / 1000);
+      const created = createdAt(event);
+      const timing = `⏱️ ตรวจพบ <t:${unix}:R>${created !== null ? `  ·  🐣 สร้างเมื่อ <t:${Math.floor(created / 1000)}:R>` : ''}`;
       const compact = {
         color: first.color,
-        description: [`⏱️ ตรวจพบ <t:${unix}:R>`, caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
+        description: [timing, caBlock(event.tokenAddress), linkRow(event.links)].filter(Boolean).join('\n'),
         fields: [],
-        image: { url: `attachment://${CARD_FILE}` },
+        // The card is a plain attachment, not an embed image: Discord shows attachments larger
+        // (up to ~550 px wide instead of ~400), so its text stays readable.
         ...(first.footer ? { footer: first.footer } : {}),
         ...(first.timestamp ? { timestamp: first.timestamp } : {}),
       };

@@ -1,5 +1,15 @@
 import type { DatabaseSync } from 'node:sqlite';
 import type { DeliveryStatus, RadarEvent } from '../core/types.ts';
+import { getAddress } from 'viem';
+
+/** As given, lower-case and checksummed: EVM events store either form depending on the source. */
+function addressForms(address: string): [string, string, string] {
+  let checksummed = address;
+  if (/^0x[0-9a-fA-F]{40}$/.test(address)) {
+    try { checksummed = getAddress(address.toLowerCase()); } catch { /* not an EVM address */ }
+  }
+  return [address, address.toLowerCase(), checksummed];
+}
 
 export interface LatencyRow {
   readonly source: string;
@@ -27,6 +37,8 @@ export interface EventRepository {
   setChainTime(key: string, chainMs: number): void;
   /** True when an event with this key was stored. */
   hasEvent(key: string): boolean;
+  /** When the radar first saw this token launch or get a pool (ms), or null if it never did. */
+  tokenCreatedAt(chain: string, tokenAddress: string): number | null;
   findTokenName(chain: string, tokenAddress: string): { name: string | null; symbol: string | null } | null;
   latencyRows(sinceMs: number): readonly LatencyRow[];
   /** How many earlier trades of this side the wallet made in this token (for "bought again" badges). */
@@ -58,6 +70,10 @@ export function createEventRepository(db: DatabaseSync): EventRepository {
     'UPDATE events SET delivery = ?, t_processed = ?, t_discord = ?, delivery_note = ? WHERE event_key = ?',
   );
   const hasEventStmt = db.prepare('SELECT 1 FROM events WHERE event_key = ?');
+  // Chain time when known, else detection time; uses the (kind, chain, token_address) index.
+  const createdAtStmt = db.prepare(`
+    SELECT MIN(COALESCE(t_chain, t_detected)) AS at FROM events
+    WHERE kind IN ('token_launched', 'pair_created') AND chain = ? AND token_address IN (?, ?, ?)`);
   const chainTimeStmt = db.prepare('UPDATE events SET t_chain = ? WHERE event_key = ?');
   const nameStmt = db.prepare(`
     SELECT token_name, token_symbol FROM events
@@ -97,6 +113,9 @@ export function createEventRepository(db: DatabaseSync): EventRepository {
     },
     setChainTime(key, chainMs) {
       chainTimeStmt.run(chainMs, key);
+    },
+    tokenCreatedAt(chain, tokenAddress) {
+      return asNumberOrNull(createdAtStmt.get(chain, ...addressForms(tokenAddress))?.at);
     },
     hasEvent(key) {
       return hasEventStmt.get(key) !== undefined;

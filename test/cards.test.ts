@@ -105,17 +105,47 @@ describe('Discord upload with a card', () => {
     const init = await deliver(async () => Buffer.from([0xff, 0xd8, 0xff]));
     assert.ok(init?.body instanceof FormData);
     const json = JSON.parse(String((init.body as FormData).get('payload_json')));
-    assert.equal(json.embeds[0].image.url, 'attachment://card.jpg');
+    assert.equal(json.embeds[0].image, undefined, 'card goes as a plain attachment (shown larger)');
+    assert.deepEqual(json.attachments, [{ id: 0, filename: 'card.jpg' }]);
+    assert.ok((init.body as FormData).get('files[0]') instanceof Blob);
     assert.equal(json.embeds.length, 1);
     assert.equal(json.embeds[0].title, undefined, 'the card carries the title: no duplicate text');
     assert.deepEqual(json.embeds[0].fields, []);
     assert.ok(json.embeds[0].description.includes('```GwytBanGx9eS55TpbG3w6veLtT8PKRcs3SXiS7nFpump```'), 'contract stays copyable');
     assert.ok(json.embeds[0].description.includes('Pump.fun'), 'links stay clickable');
     assert.match(json.embeds[0].description, /⏱️ ตรวจพบ <t:\d+:R>/, 'live "x minutes ago" stays as Discord text');
+    assert.match(json.embeds[0].description, /🐣 สร้างเมื่อ <t:\d+:R>/, 'a new token shows its age');
   });
 
   it('still sends the alert (as plain JSON) when the card cannot be drawn', async () => {
     const init = await deliver(async () => { throw new Error('boom'); });
     assert.equal(typeof init?.body, 'string');
+  });
+
+  it('shows how long ago a traded coin was launched, from the stored launch', async () => {
+    let sent: RequestInit | undefined;
+    const fetchFn = (async (_url: string, init?: RequestInit) => { sent = init; return new Response(JSON.stringify({ id: '175928847299117063' })); }) as typeof fetch;
+    const repo = createEventRepository(openDatabase(':memory:'));
+    const launchedAt = Date.parse('2026-11-25T10:00:00Z');
+    repo.insert(makeEvent({ key: 'launch', kind: 'token_launched', tokenAddress: 'Mint111', detectedAt: launchedAt }));
+    const trade = makeEvent({ key: 'trade', kind: 'wallet_trade', tokenAddress: 'Mint111', detectedAt: launchedAt + 3 * 3_600_000, details: { side: 'BUY', wallet: 'w1', tokenAmount: 1, quoteAmount: 1, quoteSymbol: 'SOL', usdValue: 200 } });
+    repo.insert(trade);
+    const notifier = createNotifier({ config: testConfig({ DISCORD_WEBHOOK_DEFAULT: WEBHOOK_URL }), repo, logger: silentLogger, fetchFn, renderCard: async () => Buffer.from([0xff, 0xd8]) });
+    await notifier.handle(trade);
+    const json = JSON.parse(String((sent?.body as FormData).get('payload_json')));
+    assert.ok(json.embeds[0].description.includes(`🐣 สร้างเมื่อ <t:${launchedAt / 1000}:R>`), json.embeds[0].description);
+  });
+});
+
+describe('tokenCreatedAt', () => {
+  it('is the earliest launch or pair event of the token (EVM case-insensitive), else null', () => {
+    const repo = createEventRepository(openDatabase(':memory:'));
+    const checksummed = '0x858C836Be5bD0511226D93CBc69a9d641A60cd6b';
+    repo.insert(makeEvent({ key: 'p1', kind: 'pair_created', chain: 'base', tokenAddress: checksummed, detectedAt: 5_000 }));
+    repo.insert(makeEvent({ key: 'p2', kind: 'pair_created', chain: 'base', tokenAddress: checksummed, detectedAt: 9_000 }));
+    assert.equal(repo.tokenCreatedAt('base', checksummed.toLowerCase()), 5_000, 'trades store lower-case, pairs checksummed');
+    assert.equal(repo.tokenCreatedAt('base', checksummed), 5_000);
+    assert.equal(repo.tokenCreatedAt('base', '0x0000000000000000000000000000000000000001'), null);
+    assert.equal(repo.tokenCreatedAt('solana', 'Mint111'), null);
   });
 });

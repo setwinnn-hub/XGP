@@ -53,25 +53,29 @@ function text(x: number, y: number, size: number, fill: string, content: string,
   return `<text x="${x}" y="${y}" font-family="${opts.font ?? FONT}" font-size="${size}" font-weight="${opts.weight ?? 400}" fill="${fill}"${opts.anchor ? ` text-anchor="${opts.anchor}"` : ''}>${xml(content)}</text>`;
 }
 
+/**
+ * Sizes are for how Discord shows the card: about 400-550 px wide, i.e. a third of the design
+ * width. Anything under ~34 px here ends up below ~11 px on screen and looks blurry.
+ */
 function leftFrame(d: CardData, accent: string): string {
   const x = LEFT.x + PAD;
   const parts = [
-    text(x, LEFT.y + 64, 30, accent, clip(d.badge, 42), { weight: 700 }),
-    `<text x="${x}" y="${LEFT.y + 128}" font-family="${FONT}">`
-      + `<tspan font-size="56" font-weight="700" fill="#ffffff">${xml(clip(d.title, 18))}</tspan>`
-      + (d.subtitle ? `<tspan font-size="32" fill="#cbd5e1" dx="16">${xml(clip(d.subtitle, 30))}</tspan>` : '')
+    text(x, LEFT.y + 66, 40, accent, clip(d.badge, 32), { weight: 700 }),
+    `<text x="${x}" y="${LEFT.y + 140}" font-family="${FONT}">`
+      + `<tspan font-size="72" font-weight="700" fill="#ffffff">${xml(clip(d.title, 14))}</tspan>`
+      + (d.subtitle ? `<tspan font-size="40" fill="#e2e8f0" dx="18">${xml(clip(d.subtitle, 18))}</tspan>` : '')
       + '</text>',
   ];
   if (d.address) {
     parts.push(
-      `<rect x="${x - 8}" y="${LEFT.y + 152}" width="${LEFT.w - 2 * PAD + 16}" height="58" rx="10" fill="#000000" fill-opacity="0.6" stroke="${accent}" stroke-opacity="0.5"/>`,
-      text(x + 10, LEFT.y + 192, d.address.length > 50 ? 24 : 29, '#d9f99d', d.address, { font: MONO }),
+      `<rect x="${x - 8}" y="${LEFT.y + 162}" width="${LEFT.w - 2 * PAD + 16}" height="62" rx="12" fill="#000000" fill-opacity="0.7" stroke="${accent}" stroke-opacity="0.6"/>`,
+      text(x + 10, LEFT.y + 205, d.address.length > 46 ? 27 : 31, '#ecfccb', d.address, { font: MONO, weight: 700 }),
     );
   }
   const colW = (LEFT.w - 2 * PAD) / 3;
   d.stats.slice(0, 3).forEach((s, i) => {
     const sx = x + i * colW;
-    parts.push(text(sx, LEFT.y + 260, 28, '#a5b4c4', clip(s.label, 16)), text(sx, LEFT.y + 306, 44, '#ffffff', clip(s.value, 12), { weight: 700 }));
+    parts.push(text(sx, LEFT.y + 268, 34, '#cbd5e1', clip(s.label, 13)), text(sx, LEFT.y + 318, 50, '#ffffff', clip(s.value, 10), { weight: 700 }));
   });
   return parts.join('');
 }
@@ -79,12 +83,12 @@ function leftFrame(d: CardData, accent: string): string {
 function rightFrame(d: CardData, accent: string): string {
   const cx = RIGHT.x + RIGHT.w / 2;
   const big = clip(d.side.big, 7);
-  const size = big.length <= 3 ? 100 : big.length <= 5 ? 76 : 58;
+  const size = big.length <= 3 ? 104 : big.length <= 5 ? 80 : 60;
   return [
-    `<rect x="${RIGHT.x + 30}" y="${RIGHT.y + 78}" width="${RIGHT.w - 60}" height="46" rx="23" fill="#000000" fill-opacity="0.7"/>`,
-    text(cx, RIGHT.y + 111, 28, '#ffffff', clip(d.side.top, 14), { weight: 700, anchor: 'middle' }),
-    text(cx, RIGHT.y + 225, size, accent, big, { weight: 700, anchor: 'middle' }),
-    text(cx, RIGHT.y + 286, 26, '#e2e8f0', clip(d.side.bottom, 16), { anchor: 'middle' }),
+    `<rect x="${RIGHT.x + 22}" y="${RIGHT.y + 72}" width="${RIGHT.w - 44}" height="56" rx="28" fill="#000000" fill-opacity="0.75"/>`,
+    text(cx, RIGHT.y + 112, 36, '#ffffff', clip(d.side.top, 11), { weight: 700, anchor: 'middle' }),
+    text(cx, RIGHT.y + 230, size, accent, big, { weight: 700, anchor: 'middle' }),
+    text(cx, RIGHT.y + 292, 32, '#ffffff', clip(d.side.bottom, 13), { weight: 700, anchor: 'middle' }),
   ].join('');
 }
 

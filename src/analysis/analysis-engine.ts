@@ -99,6 +99,7 @@ function analysisEvent(ref: TokenRef, result: AnalysisResult, key: string, alert
       buysH1: m?.txnsH1.buys ?? null,
       sellsH1: m?.txnsH1.sells ?? null,
       changeH1Pct: m?.priceChangePct.h1 ?? null,
+      pairCreatedAt: m?.pairCreatedAt ?? null,
       dexId: m?.dexId ?? null,
       image: m?.imageUrl ?? null,
     },
