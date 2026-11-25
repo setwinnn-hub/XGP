@@ -16,7 +16,33 @@ export interface SecurityReport {
   /** Share of supply held by the 10 largest holders, excluding pools, burn and lock addresses (0–100). */
   readonly top10HoldersPct: number | null;
   readonly creatorPct: number | null;
+  /** Extra EVM facts used by the Early Gem security engine (optional: older callers ignore them). */
+  readonly extra?: SecurityExtra;
 }
+
+export interface SecurityExtra {
+  readonly cannotBuy: boolean | null;
+  readonly transferTaxPct: number | null;
+  readonly proxy: boolean | null;
+  readonly blacklist: boolean | null;
+  readonly whitelist: boolean | null;
+  readonly takeBackOwnership: boolean | null;
+  readonly slippageModifiable: boolean | null;
+  readonly personalSlippageModifiable: boolean | null;
+  readonly tradingCooldown: boolean | null;
+  readonly externalCall: boolean | null;
+  readonly selfDestruct: boolean | null;
+  readonly honeypotSameCreator: boolean | null;
+  /** Owner is the zero/dead address (renounced); null when GoPlus gave no owner field. */
+  readonly ownerRenounced: boolean | null;
+  readonly ownerPct: number | null;
+  /** Share of LP tokens burned or in a locker (0–100); null when GoPlus has no LP holder list. */
+  readonly lpLockedPct: number | null;
+  /** Pool fee (fraction) by pair/pool address, lower-cased, from GoPlus's DEX list. */
+  readonly poolFees: Readonly<Record<string, number>>;
+}
+
+const BURN_ADDRESS = /^0x0{40}$|^0x0{36}dead$/i;
 
 const GOPLUS = 'https://api.gopluslabs.io/api/v1';
 const EVM_CHAIN_IDS: Readonly<Partial<Record<ChainId, string>>> = { ethereum: '1', bsc: '56', base: '8453' };
@@ -61,6 +87,36 @@ function top10(holders: unknown, lpHolders: unknown): number | null {
   return shares.reduce((sum, p) => sum + p, 0) * 100;
 }
 
+function lpLocked(lpHolders: unknown): number | null {
+  if (!Array.isArray(lpHolders) || lpHolders.length === 0) return null;
+  const locked = (lpHolders as Raw[])
+    .filter((h) => String(h.is_locked) === '1' || BURN_ADDRESS.test(String(h.address ?? '')))
+    .map((h) => Number(h.percent))
+    .filter(Number.isFinite);
+  return Math.min(100, locked.reduce((sum, p) => sum + p, 0) * 100);
+}
+
+function poolFees(dex: unknown): Record<string, number> {
+  if (!Array.isArray(dex)) return {};
+  return Object.fromEntries((dex as Raw[]).flatMap((d) => {
+    const fee = Number(d.pool_fee);
+    return typeof d.pair === 'string' && Number.isFinite(fee) && fee >= 0 && fee < 1 ? [[d.pair.toLowerCase(), fee]] : [];
+  }));
+}
+
+function evmExtra(r: Raw): SecurityExtra {
+  const owner = typeof r.owner_address === 'string' ? r.owner_address : null;
+  return {
+    cannotBuy: flag(r.cannot_buy), transferTaxPct: pct(r.transfer_tax), proxy: flag(r.is_proxy),
+    blacklist: flag(r.is_blacklisted), whitelist: flag(r.is_whitelisted), takeBackOwnership: flag(r.can_take_back_ownership),
+    slippageModifiable: flag(r.slippage_modifiable), personalSlippageModifiable: flag(r.personal_slippage_modifiable),
+    tradingCooldown: flag(r.trading_cooldown), externalCall: flag(r.external_call), selfDestruct: flag(r.selfdestruct),
+    honeypotSameCreator: flag(r.honeypot_with_same_creator),
+    ownerRenounced: owner === null || owner === '' ? null : BURN_ADDRESS.test(owner),
+    ownerPct: pct(r.owner_percent), lpLockedPct: lpLocked(r.lp_holders), poolFees: poolFees(r.dex),
+  };
+}
+
 /** Normalizes one GoPlus result entry (EVM or Solana shape). */
 export function parseSecurity(entry: unknown, solana: boolean): SecurityReport {
   const r = (entry ?? {}) as Raw;
@@ -83,6 +139,7 @@ export function parseSecurity(entry: unknown, solana: boolean): SecurityReport {
     transferPausable: flag(r.transfer_pausable), openSource: flag(r.is_open_source),
     holderCount: typeof r.holder_count === 'string' && r.holder_count !== '' ? Number(r.holder_count) : null,
     top10HoldersPct: top10(r.holders, r.lp_holders), creatorPct: pct(r.creator_percent),
+    extra: evmExtra(r),
   };
 }
 

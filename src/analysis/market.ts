@@ -18,6 +18,12 @@ export interface MarketSnapshot {
   readonly socials: number;
   readonly websites: number;
   readonly imageUrl: string | null;
+  /** Price in the pool's quote token (e.g. WBNB); priceUsd / priceNative = quote token USD price. */
+  readonly priceNative?: number | null;
+  /** Pool reserves as DexScreener reports them (token side and quote side). */
+  readonly liquidityBase?: number | null;
+  readonly liquidityQuote?: number | null;
+  readonly quoteTokenAddress?: string | null;
 }
 
 const DEXSCREENER = 'https://api.dexscreener.com/tokens/v1';
@@ -56,6 +62,10 @@ function toSnapshot(pair: Raw): MarketSnapshot {
     socials: Array.isArray(info.socials) ? info.socials.length : 0,
     websites: Array.isArray(info.websites) ? info.websites.length : 0,
     imageUrl: image,
+    priceNative: num(pair.priceNative),
+    liquidityBase: num(obj(pair.liquidity).base),
+    liquidityQuote: num(obj(pair.liquidity).quote),
+    quoteTokenAddress: typeof obj(pair.quoteToken).address === 'string' ? String(obj(pair.quoteToken).address) : null,
   };
 }
 

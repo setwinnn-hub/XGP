@@ -96,13 +96,20 @@ describe('gem settings', () => {
   it('defaults to 66,000–500,000 THB and rejects invalid ranges', () => {
     assert.deepEqual(normalizeSettings(undefined), DEFAULT_GEM_SETTINGS);
     assert.deepEqual(normalizeSettings({ minMarketCapThb: 900, maxMarketCapThb: 100 }), DEFAULT_GEM_SETTINGS);
-    assert.deepEqual(normalizeSettings({ minMarketCapThb: 'x', maxMarketCapThb: 700_000 }), { minMarketCapThb: 66_000, maxMarketCapThb: 700_000 });
+    assert.deepEqual(normalizeSettings({ minMarketCapThb: 'x', maxMarketCapThb: 700_000 }), { ...DEFAULT_GEM_SETTINGS, minMarketCapThb: 66_000, maxMarketCapThb: 700_000 });
+  });
+
+  it('keeps valid liquidity thresholds and replaces invalid ones with defaults', () => {
+    const s = normalizeSettings({ minLiquidityThb: 250_000, maxSlippagePct: -5, testTradeThb: 0 });
+    assert.equal(s.minLiquidityThb, 250_000);
+    assert.equal(s.maxSlippagePct, DEFAULT_GEM_SETTINGS.maxSlippagePct);
+    assert.equal(s.testTradeThb, DEFAULT_GEM_SETTINGS.testTradeThb);
   });
 
   it('stores and reloads settings', () => {
     const repo = createSettingsRepository(openDatabase(':memory:'));
     assert.deepEqual(repo.get(), DEFAULT_GEM_SETTINGS);
-    repo.save({ minMarketCapThb: 100_000, maxMarketCapThb: 300_000 });
-    assert.deepEqual(repo.get(), { minMarketCapThb: 100_000, maxMarketCapThb: 300_000 });
+    repo.save({ ...DEFAULT_GEM_SETTINGS, minMarketCapThb: 100_000, maxMarketCapThb: 300_000 });
+    assert.deepEqual(repo.get(), { ...DEFAULT_GEM_SETTINGS, minMarketCapThb: 100_000, maxMarketCapThb: 300_000 });
   });
 });

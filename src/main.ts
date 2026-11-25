@@ -26,12 +26,27 @@ import { watchFor } from './gem/watch-policy.ts';
 import { createGemMonitor } from './gem/gem-monitor.ts';
 import { createSignalStore } from './gem/signal-store.ts';
 import { isChainId } from './wallets/wallet-repo.ts';
+import { fetchPairReserves } from './gem/pool-reserves.ts';
+import { createQualityStore } from './gem/quality-store.ts';
+import { createSecurityCache } from './gem/security-cache.ts';
+import { createSettingsRepository } from './gem/settings.ts';
+import type { EvmChainConfig } from './chains/evm/chains.ts';
 import { explorerUrls, toTradeEvent, type WalletTrade } from './trades/trade-event.ts';
 import { createTradeSink } from './trades/trade-sink.ts';
 import { WalletRegistry } from './wallets/wallet-registry.ts';
 import { createWalletRepository } from './wallets/wallet-repo.ts';
 
 const HEALTH_SWEEP_MS = 10_000;
+
+/** One HTTP client per EVM chain for Early Gem reads (kept off the pair-detection WebSocket). */
+const gemClients = new Map<string, PublicClient>();
+function gemClient(chain: EvmChainConfig): PublicClient {
+  const existing = gemClients.get(chain.id);
+  if (existing) return existing;
+  const client = createPublicClient({ transport: http(httpUrlFor(chain), { timeout: 15_000 }) }) as PublicClient;
+  gemClients.set(chain.id, client);
+  return client;
+}
 const STATS_INTERVAL_MS = 60_000;
 const WALLET_REFRESH_MS = 15_000;
 
@@ -74,7 +89,7 @@ function buildAdapters(w: Wiring): Adapter[] {
     swapCollector: config.gemSwapChains.includes(chain.id)
       ? createSwapCollector({
           chain, store: swapStore, logger,
-          rpc: createPublicClient({ transport: http(httpUrlFor(chain), { timeout: 15_000 }) }) as PublicClient,
+          rpc: gemClient(chain),
         })
       : undefined,
   }));
@@ -128,6 +143,16 @@ function main(): void {
   const gemMonitor = createGemMonitor({
     chains: config.gemSwapChains.filter(isChainId), swaps: swapStore, signals: createSignalStore(db), logger,
     smartWallets: (chain) => new Set(registry.wallets(chain).keys()),
+    quality: {
+      store: createQualityStore(db),
+      security: createSecurityCache({ logger }),
+      settings: (() => { const repo = createSettingsRepository(db); return () => repo.get(); })(),
+      thbPerUsd: () => prices.fxRate()?.thbPerUsd ?? null,
+      reserves: async (chain, requests) => {
+        const evm = findEvmChain(chain);
+        return evm ? fetchPairReserves(gemClient(evm), requests) : new Map();
+      },
+    },
   });
 
   const resolveSolanaTime = createSolanaChainTimeResolver({

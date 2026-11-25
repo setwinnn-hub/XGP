@@ -5,6 +5,8 @@ import { detectAccumulation, type AccumulationReport, type AccumulationStatus } 
 import type { SignalEntry, SignalStore } from './signal-store.ts';
 import { tokenCoverageSince } from './swap-collector.ts';
 import type { SwapStore, WatchEntry } from './swap-store.ts';
+import type { PairReserves } from './pool-reserves.ts';
+import { evaluateQuality, type QualityDeps } from './quality-evaluator.ts';
 
 const INTERVAL_MS = 60_000;
 /** Enough history for the 60-minute window and the one before the 5-minute window. */
@@ -12,6 +14,8 @@ const LOOKBACK_MS = 75 * 60_000;
 /** A verdict is stored when it changes, and at least this often while it stays the same. */
 const RECORD_EVERY_MS = 15 * 60_000;
 const NOTABLE: readonly AccumulationStatus[] = ['ACCUMULATING', 'PRE_PUMP', 'SUSPICIOUS'];
+/** GoPlus + honeypot.is lookups per pass (free APIs; the rest wait for the next minute). */
+const SECURITY_FETCHES_PER_PASS = 3;
 
 export interface GemMonitorDeps {
   readonly chains: readonly ChainId[];
@@ -21,6 +25,8 @@ export interface GemMonitorDeps {
   readonly smartWallets: (chain: ChainId) => ReadonlySet<string>;
   readonly logger: Logger;
   readonly fetchMarkets?: typeof fetchMarkets;
+  /** Liquidity + security (Stage 8). Absent = accumulation only. */
+  readonly quality?: QualityDeps;
   readonly now?: () => number;
 }
 
@@ -52,7 +58,18 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
     }
   };
 
-  const evaluate = (chain: ChainId, watch: WatchEntry, market: MarketSnapshot | null, asOf: number, coverage: number): number => {
+  const reservesFor = async (chain: ChainId, watches: readonly WatchEntry[]): Promise<ReadonlyMap<string, PairReserves>> => {
+    const pairs = watches.filter((w) => w.poolKind === 'pair').map((w) => ({ pair: w.pool, token: w.token }));
+    if (!deps.quality?.reserves || pairs.length === 0) return new Map();
+    try {
+      return await deps.quality.reserves(chain, pairs);
+    } catch (error: unknown) {
+      logger.warn('pool reserves unavailable', { chain, error: errorMessage(error) });
+      return new Map();
+    }
+  };
+
+  const evaluate = (chain: ChainId, watch: WatchEntry, market: MarketSnapshot | null, asOf: number, coverage: number): { recorded: number; report: AccumulationReport } => {
     const report = detectAccumulation({
       swaps: deps.swaps.swaps(chain, watch.token, asOf - LOOKBACK_MS),
       now: asOf, coverageSince: tokenCoverageSince(watch, coverage), smartWallets: deps.smartWallets(chain),
@@ -60,13 +77,13 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
     });
     const last = deps.signals.latest(chain, watch.token);
     const changed = !last || last.status !== report.status || last.confidence !== report.confidence;
-    if (!changed && asOf - last.at < RECORD_EVERY_MS) return 0;
+    if (!changed && asOf - last.at < RECORD_EVERY_MS) return { recorded: 0, report };
     const entry: SignalEntry = { chain, token: watch.token, at: asOf, status: report.status, confidence: report.confidence, reasons: report.reasons, metrics: metricsOf(report) };
     deps.signals.record(entry);
     if (changed && NOTABLE.includes(report.status)) {
       logger.info('gem signal', { chain, token: watch.token, symbol: watch.symbol, status: report.status, confidence: report.confidence, reasons: report.reasons });
     }
-    return 1;
+    return { recorded: 1, report };
   };
 
   const tick = async (): Promise<number> => {
@@ -76,11 +93,22 @@ export function createGemMonitor(deps: GemMonitorDeps): GemMonitor {
       const cursor = deps.swaps.cursor(chain);
       if (watches.length === 0 || !cursor) continue;
       const byToken = await markets(chain, watches);
+      const reserves = await reservesFor(chain, watches);
       // Judge as of the collector's last scan, so a stalled collector never looks like "no buyers".
       const asOf = Math.min(now(), cursor.updatedAt);
+      let securityBudget = SECURITY_FETCHES_PER_PASS;
       for (const watch of watches) {
         try {
-          recorded += evaluate(chain, watch, byToken.get(watch.token.toLowerCase()) ?? null, asOf, cursor.coverageSince);
+          const market = byToken.get(watch.token.toLowerCase()) ?? null;
+          const result = evaluate(chain, watch, market, asOf, cursor.coverageSince);
+          recorded += result.recorded;
+          if (!deps.quality) continue;
+          const quality = await evaluateQuality(deps.quality, {
+            chain, watch, market, asOf, accumulation: result.report,
+            reserves: reserves.get(watch.pool.toLowerCase()) ?? null, allowSecurityFetch: securityBudget > 0,
+          }, logger);
+          if (quality.securityFetched) securityBudget -= 1;
+          recorded += quality.recorded;
         } catch (error: unknown) {
           logger.warn('gem evaluation failed', { chain, token: watch.token, error: errorMessage(error) });
         }

@@ -286,6 +286,51 @@
 - เกณฑ์ทั้งหมดยังไม่ได้ปรับด้วย backtest (Stage 12) **อย่าใช้ PRE_PUMP เป็นสัญญาณซื้อ**
 - ยังไม่ส่งแจ้งเตือนเข้า Discord (Stage 10) ตอนนี้มีแค่ log `gem signal` และประวัติในฐานข้อมูล
 
+### Stage 8: Liquidity + Security Engine ✅
+| ไฟล์ | การเปลี่ยนแปลง |
+|---|---|
+| `src/gem/slippage.ts` (ใหม่) | คำนวณ x·y=k ซึ่งให้ค่าตรงเป๊ะสำหรับ pair แบบ V2 ส่วน V3/V4 ให้เป็น "ค่าประมาณ" slippage ที่ได้ = price impact + ค่าธรรมเนียม pool ไม่รวมภาษีของ token (ภาษีแยกไว้ใน security) |
+| `src/gem/pool-reserves.ts` (ใหม่) | อ่าน `getReserves`/`token0`/`token1`/`decimals` ของ pair V2 ทั้งหมดด้วย multicall ครั้งเดียว ถ้าเป็น V3 จะ revert และถูกข้ามไป |
+| `src/gem/liquidity.ts` (ใหม่) | แยก 3 คำตอบออกจากกัน ไม่รวมเป็นสถานะเดียว: activity (`NO_REAL_ACTIVITY`/`LOW_ACTIVITY`/`ACTIVE`), liquidity (`INSUFFICIENT_LIQUIDITY`/`OK`/`UNKNOWN`) และ slippage ฝั่งซื้อ/ขาย ตามขนาดเงินที่ตั้งไว้ มี **exit liquidity** (2 เท่าของฝั่งเงิน) และ flag `ONE_SIDED`, `LIQUIDITY_DROP` (ลด ≥30% จากจุดสูงสุดใน 1 ชม.), `LIQUIDITY_GROWING`, `RESERVES_MISMATCH` |
+| `src/gem/honeypot.ts` (ใหม่) | honeypot.is: จำลองซื้อ/ขายจริงแล้วรายงานภาษี ถ้าตอบ 404 = `NOT_COVERED` ซึ่งไม่ได้แปลว่าปลอดภัย |
+| `src/analysis/security.ts` | เพิ่มข้อมูลจาก GoPlus ใน `extra` (optional โค้ดวิเคราะห์เดิมไม่ได้รับผลกระทบ): proxy, blacklist/whitelist, แก้ภาษีได้, cooldown, external call, selfdestruct, ผู้สร้างเคยทำ honeypot, owner renounced, **LP burn/lock %**, ค่าธรรมเนียมของแต่ละ pool |
+| `src/gem/security-engine.ts` (ใหม่) | 25 checks สำหรับ EVM และ 6 checks สำหรับ Solana แต่ละ check มี PASS/WARN/FAIL/UNKNOWN พร้อมแหล่งที่มา ระดับรวม: `CRITICAL` / `HIGH_RISK` / `UNKNOWN` / `CAUTION` / `NO_ISSUES_FOUND` **ไม่มีระดับ "SAFE"** ถ้าแหล่งข้อมูลขัดกันจะใช้คำตอบที่แย่กว่าและบันทึกไว้ ถ้าเป็น `CRITICAL` จะตั้ง `suppressGemAlert` |
+| `src/gem/security-cache.ts` (ใหม่) | เก็บผล GoPlus + honeypot.is ไว้ 30 นาที ค้นได้ไม่เกิน 3 เหรียญต่อรอบ ถ้าค้นไม่สำเร็จจะใช้คำตอบเดิมต่อ ถ้าโดน rate limit จะพัก 2 นาที |
+| `src/gem/quality-store.ts`, `quality-evaluator.ts` (ใหม่) | ตาราง `gem_liquidity` และ `gem_security` (บันทึกเมื่อเปลี่ยน หรือทุก 10/30 นาที) และ log `gem liquidity drop` / `gem security critical` |
+| `src/gem/gem-monitor.ts`, `src/main.ts` | ทุก 1 นาทีประเมิน liquidity + security ต่อจาก accumulation ใช้ HTTP client เดียวกันต่อ chain |
+| `src/gem/settings.ts` | เพิ่มค่าที่ปรับได้: สภาพคล่องขั้นต่ำ ฿100,000, ขนาดเงินทดสอบ ฿5,000, slippage สูงสุด 10%, ซื้อขั้นต่ำ 10 ครั้ง, ผู้ซื้อขั้นต่ำ 8 ราย, กระเป๋าอิสระขั้นต่ำ 6 ราย |
+| `src/analysis/market.ts` | เพิ่ม `priceNative`, `liquidityBase/Quote`, `quoteTokenAddress` (optional) |
+| `scripts/token-check.ts` (ใหม่) | `npm run tokencheck -- <chain> <token> [ขนาดเงินบาท]` |
+| `test/gem-quality.test.ts` (ใหม่) | 16 tests ใช้รูปแบบข้อมูลจริงของ honeypot.is, GoPlus และ DexScreener V4 |
+
+**ผลทดสอบจริง (25 พ.ย.):**
+- **JIMMY (ETH, Uniswap V2):**
+  - reserve บน chain 1.8619 ETH ตรงกับ DexScreener 1.8618
+  - ซื้อ/ขาย ฿5,000 เสียราคา 4.75%
+  - GoPlus และ honeypot.is ตรงกันว่าภาษี 0% และไม่ใช่ honeypot, LP burn 100%
+  - แต่ **เจ้าของแก้ภาษีได้และมีเจ้าของแฝง** จึงเป็น `HIGH_RISK`
+- **`0xc36C…7777` (BSC, PancakeSwap V2):**
+  - pool ฿1.05M, ซื้อ/ขาย ฿5,000 เสียราคา 1.19% (fee 0.25% จาก GoPlus), ฿50,000 เสียราคา 8.47%
+  - honeypot.is ไม่มี pair นี้ (`NOT_COVERED`) GoPlus ตอบครบ
+  - ผล `NO_ISSUES_FOUND` พร้อมหมายเหตุว่า "ไม่ได้แปลว่าปลอดภัย"
+- **`0xC21C…` (Base, Uniswap V4):**
+  - DexScreener บอกสภาพคล่อง $4,011 แต่**ฝั่ง ETH มีแค่ $0.10** (liquidity เป็นตัว token เกือบทั้งหมด)
+  - ระบบแสดง exit liquidity ฿7 และ `INSUFFICIENT_LIQUIDITY`
+  - ไม่เดา slippage ฝั่งซื้อ (ประเมินไม่ได้)
+  - เดิมระบบเชื่อตัวเลข $4,011 ได้แก้แล้ว
+- **Monitor ในบอท (23 เหรียญ, 5 นาที):**
+  - Security: HIGH_RISK 11, UNKNOWN 6, CAUTION 4, NO_ISSUES_FOUND 2
+  - Liquidity: OK 11, INSUFFICIENT 14, UNKNOWN 2
+  - ไม่มี warning หรือ error จาก `gem:*`
+- **Regression:** test ผ่าน 199/199, typecheck ผ่าน
+
+**ข้อจำกัด:**
+- slippage ของ V3/V4 เป็นค่าประมาณแบบ full-range (Uniswap Quoter แบบ on-chain ยังไม่ได้ทำ)
+- **LP lock ของ V3/V4 ตรวจไม่ได้** (LP เป็น NFT) จึงขึ้นเป็น `UNKNOWN` เสมอ
+- honeypot.is ไม่มีข้อมูลหลาย pair บน BSC และไม่รองรับ Solana, Solana ยังไม่มีการจำลองการขาย
+- ไม่ได้ตรวจ: Related Deployer Wallets, Known Malicious Wallet Exposure, Insider Wallet Concentration (ไม่มีแหล่งข้อมูลฟรี)
+- Liquidity Concentration ข้ามหลาย pool ยังไม่ได้คิด (GoPlus มีรายชื่อ pool อยู่แล้ว ทำต่อได้)
+
 ## 6. การตัดสินใจ (ยืนยันแล้ว 25 พ.ย. 2026)
 1. **ช่วง market cap เริ่มต้น: 66,000–500,000 บาท** (≈ $2k–$15k) ปรับได้ใน Dashboard ภายหลัง
 2. **ทำ EVM (ETH/Base/BNB) ก่อน** ส่วน Solana จะเพิ่มเมื่อมี Helius key ระหว่างนี้ Solana ใช้ข้อมูลจาก DexScreener ได้อย่างเดียว และติดป้าย LOW CONFIDENCE
